@@ -11,9 +11,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from matchgenomeipl.chronology import EvaluationWindow, KnowledgeCutoff, chronology_diagnostics
-from matchgenomeipl.database import connect_db
+from matchgenomeipl.database import connect_db, database_runtime_status
 from matchgenomeipl.evaluation import MixtureTuningConfig, evaluate_temporal_models
-from matchgenomeipl.ingestion import ingest_csv_to_sqlite
+from matchgenomeipl.ingestion import ensure_dataset_ready
 
 
 def summarize_model_block(block: dict) -> dict:
@@ -79,9 +79,10 @@ def main() -> None:
     db_path = ROOT / "data" / "ipl.sqlite3"
 
     conn = connect_db(db_path)
-    ingest_stats = ingest_csv_to_sqlite(conn, csv_path)
+    ingest_stats = ensure_dataset_ready(conn, csv_path)
 
     chronology = chronology_diagnostics(conn)
+    runtime = database_runtime_status(conn)
 
     exp_2024_2025 = run_experiment(conn, cutoff_season=2024, eval_season=2025)
 
@@ -90,6 +91,7 @@ def main() -> None:
 
     report = {
         "ingestion": ingest_stats.__dict__,
+        "runtime_status": runtime,
         "chronology": chronology,
         "experiments": [exp_2024_2025, exp_2023_2024],
     }

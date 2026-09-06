@@ -52,18 +52,23 @@ def dataset_summary(conn: sqlite3.Connection) -> dict[str, Any]:
 
 def batter_stats(conn: sqlite3.Connection, batter: str) -> dict[str, Any]:
     row = conn.execute(
-        """
-        SELECT
-            COALESCE(SUM(batter_runs), 0) AS runs,
-            COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls_faced,
-            COALESCE(SUM(CASE WHEN batter_runs = 4 THEN 1 ELSE 0 END), 0) AS fours,
-            COALESCE(SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes,
-            COALESCE(SUM(CASE WHEN total_runs = 0 AND is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS dots
-        FROM deliveries
-        WHERE batter = ?
-        """,
+        "SELECT runs, balls_faced, fours, sixes, dots FROM batter_stats_agg WHERE batter = ?",
         (batter,),
     ).fetchone()
+    if row is None:
+        row = conn.execute(
+            """
+            SELECT
+                COALESCE(SUM(batter_runs), 0) AS runs,
+                COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls_faced,
+                COALESCE(SUM(CASE WHEN batter_runs = 4 THEN 1 ELSE 0 END), 0) AS fours,
+                COALESCE(SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes,
+                COALESCE(SUM(CASE WHEN total_runs = 0 AND is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS dots
+            FROM deliveries
+            WHERE batter = ?
+            """,
+            (batter,),
+        ).fetchone()
 
     balls_faced = int(row["balls_faced"])
     runs = int(row["runs"])
@@ -82,22 +87,27 @@ def batter_stats(conn: sqlite3.Connection, batter: str) -> dict[str, Any]:
 
 
 def bowler_stats(conn: sqlite3.Connection, bowler: str) -> dict[str, Any]:
-    placeholders = ",".join("?" for _ in NON_BOWLER_WICKETS)
     row = conn.execute(
-        f"""
-        SELECT
-            COALESCE(SUM(total_runs - bye_runs - leg_bye_runs), 0) AS runs_conceded,
-            COALESCE(SUM(legal_ball), 0) AS legal_balls,
-            COALESCE(SUM(CASE
-                WHEN is_wicket = 1
-                     AND LOWER(COALESCE(wicket_kind, '')) NOT IN ({placeholders})
-                THEN 1 ELSE 0 END), 0) AS wickets,
-            COALESCE(SUM(CASE WHEN total_runs = 0 THEN 1 ELSE 0 END), 0) AS dots
-        FROM deliveries
-        WHERE bowler = ?
-        """,
-        tuple(NON_BOWLER_WICKETS) + (bowler,),
+        "SELECT runs_conceded, legal_balls, wickets, dots FROM bowler_stats_agg WHERE bowler = ?",
+        (bowler,),
     ).fetchone()
+    if row is None:
+        placeholders = ",".join("?" for _ in NON_BOWLER_WICKETS)
+        row = conn.execute(
+            f"""
+            SELECT
+                COALESCE(SUM(total_runs - bye_runs - leg_bye_runs), 0) AS runs_conceded,
+                COALESCE(SUM(legal_ball), 0) AS legal_balls,
+                COALESCE(SUM(CASE
+                    WHEN is_wicket = 1
+                         AND LOWER(COALESCE(wicket_kind, '')) NOT IN ({placeholders})
+                    THEN 1 ELSE 0 END), 0) AS wickets,
+                COALESCE(SUM(CASE WHEN total_runs = 0 THEN 1 ELSE 0 END), 0) AS dots
+            FROM deliveries
+            WHERE bowler = ?
+            """,
+            tuple(NON_BOWLER_WICKETS) + (bowler,),
+        ).fetchone()
 
     legal_balls = int(row["legal_balls"])
     overs = legal_balls / 6.0

@@ -11,11 +11,10 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from matchgenomeipl.analytics import batter_stats, bowler_stats, dataset_summary, runs_wickets_by_over
-from matchgenomeipl.database import connect_db
-from matchgenomeipl.ingestion import ingest_csv_to_sqlite
+from matchgenomeipl.database import connect_db, database_runtime_status
+from matchgenomeipl.ingestion import ensure_dataset_ready
 from matchgenomeipl.match_state import build_pre_delivery_state
 from matchgenomeipl.prediction import predict_next_ball_baseline
-from matchgenomeipl.validation import profile_dataset
 
 
 def select_target_delivery(conn: sqlite3.Connection) -> tuple[int, int, int, int, int]:
@@ -37,10 +36,9 @@ def main() -> None:
     csv_path = ROOT / "data" / "ipl_ball_by_ball_data.csv"
     db_path = ROOT / "data" / "ipl.sqlite3"
 
-    profile = profile_dataset(csv_path)
-
     conn = connect_db(db_path)
-    stats = ingest_csv_to_sqlite(conn, csv_path)
+    stats = ensure_dataset_ready(conn, csv_path)
+    runtime = database_runtime_status(conn)
 
     summary = dataset_summary(conn)
 
@@ -55,36 +53,8 @@ def main() -> None:
     over_split = runs_wickets_by_over(conn, season_id, match_id, innings)[:5]
 
     report = {
-        "dataset_profile": {
-            "file_type": profile.file_type,
-            "row_count": profile.row_count,
-            "column_count": profile.column_count,
-            "columns": profile.columns,
-            "seasons": profile.seasons,
-            "match_count": profile.match_count,
-            "innings_values": profile.innings_values,
-            "team_count": len(profile.teams),
-            "player_count": profile.players,
-            "deliveries_per_match": {
-                "min": profile.deliveries_per_match_min,
-                "max": profile.deliveries_per_match_max,
-                "avg": profile.deliveries_per_match_avg,
-            },
-            "innings_per_match": {
-                "min": profile.innings_per_match_min,
-                "max": profile.innings_per_match_max,
-            },
-            "null_counts": profile.null_counts,
-            "duplicate_rows": profile.duplicate_rows,
-            "duplicate_delivery_identities": profile.duplicate_delivery_identities,
-            "invalid_numeric_counts": profile.invalid_numeric_counts,
-            "invalid_boolean_counts": profile.invalid_boolean_counts,
-            "impossible_run_records": profile.impossible_run_records,
-            "wicket_inconsistencies": profile.wicket_inconsistencies,
-            "malformed_records": profile.malformed_records,
-            "super_over_records": profile.super_over_records,
-        },
         "ingestion_stats": stats.__dict__,
+        "runtime_status": runtime,
         "dataset_summary": summary,
         "example_target": {
             "season_id": season_id,
