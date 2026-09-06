@@ -4,11 +4,13 @@ import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import time
 from typing import Any
 
 from .analytics import classify_delivery_outcome
 from .constants import OUTCOME_LABELS
 from .match_state import get_legal_balls_before_delivery, get_target_delivery, innings_phase
+from .runtime_logging import log_sql
 
 
 HIERARCHICAL_CONTEXTS = [
@@ -41,8 +43,10 @@ def top_outcome(probabilities: dict[str, float]) -> str:
 
 
 def _counts_from_query(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> Counter[str]:
+    started = time.perf_counter()
     counts: Counter[str] = Counter()
     rows = conn.execute(sql, params).fetchall()
+    log_sql("prediction_counts", sql, params, started, row_count=len(rows))
     for row in rows:
         counts[str(row["outcome_label"])] += int(row["deliveries"])
     return counts
@@ -102,8 +106,7 @@ class SequentialPredictionSession:
         self.season_id = season_id
         self.match_id = match_id
         self.innings = innings
-        self.rows = conn.execute(
-            """
+        load_sql = """
             SELECT
                 season_id,
                 match_id,
@@ -163,9 +166,16 @@ class SequentialPredictionSession:
             FROM deliveries
             WHERE season_id = ? AND match_id = ? AND innings = ?
             ORDER BY over_number, ball_number, source_row_number
-            """,
+            """
+        load_started = time.perf_counter()
+        self.rows = conn.execute(load_sql, (season_id, match_id, innings)).fetchall()
+        log_sql(
+            "replay_load_innings",
+            load_sql,
             (season_id, match_id, innings),
-        ).fetchall()
+            load_started,
+            row_count=len(self.rows),
+        )
         if not self.rows:
             raise ValueError("No deliveries found for replay session")
 

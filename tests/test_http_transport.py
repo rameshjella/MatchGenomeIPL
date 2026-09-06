@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 from unittest.mock import patch
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,6 +78,17 @@ class HttpTransportTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertIn("MatchGenome Time Machine", body)
 
+    def test_player_endpoints(self) -> None:
+        status, players = self._get("/api/players")
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(len(players["players"]), 1)
+        name = quote(players["players"][0]["player_name"])
+
+        status, profile = self._get(f"/api/players/{name}")
+        self.assertEqual(status, 200)
+        self.assertIn("overview", profile)
+        self.assertIn("player", profile)
+
     def test_replay_predict_reveal_and_completion(self) -> None:
         status, created = self._post("/api/replays", {"match_id": 1, "innings": 1})
         self.assertEqual(status, 201)
@@ -116,6 +128,10 @@ class HttpTransportTests(unittest.TestCase):
         with patch("pathlib.Path.open", side_effect=AssertionError("CSV access not allowed")):
             self._post(f"/api/replays/{session_id}/predict")
             self._post(f"/api/replays/{session_id}/reveal")
+
+    def test_csv_is_not_served(self) -> None:
+        with self.assertRaises(HTTPError):
+            urlopen(self._url("/data/ipl_ball_by_ball_data.csv"))
 
 
 if __name__ == "__main__":

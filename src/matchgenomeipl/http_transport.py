@@ -6,8 +6,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import re
 import sqlite3
+import time
 from typing import Any, Callable, cast
+from urllib.parse import parse_qs, unquote, urlparse
 
+from .runtime_logging import log_event, log_http
 from .time_machine import TimeMachineService
 from .time_machine_api import TimeMachineAPI
 
@@ -55,55 +58,79 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:  # noqa: N802
+        started = time.perf_counter()
+        status_code = HTTPStatus.OK
         try:
-            if self.path == "/api/seasons":
+            parsed = urlparse(self.path)
+            route = parsed.path
+            query = parse_qs(parsed.query)
+
+            if route == "/api/seasons":
                 _json_response(self, HTTPStatus.OK, self._app().api.get_seasons())
                 return
 
-            match = re.fullmatch(r"/api/seasons/(\d+)/matches", self.path)
+            match = re.fullmatch(r"/api/seasons/(\d+)/matches", route)
             if match:
                 season_id = int(match.group(1))
                 _json_response(self, HTTPStatus.OK, self._app().api.get_season_matches(season_id))
                 return
 
-            match = re.fullmatch(r"/api/matches/(\d+)", self.path)
+            match = re.fullmatch(r"/api/matches/(\d+)", route)
             if match:
                 match_id = int(match.group(1))
                 _json_response(self, HTTPStatus.OK, self._app().api.get_match(match_id))
                 return
 
-            match = re.fullmatch(r"/api/matches/(\d+)/innings", self.path)
+            match = re.fullmatch(r"/api/matches/(\d+)/innings", route)
             if match:
                 match_id = int(match.group(1))
                 _json_response(self, HTTPStatus.OK, self._app().api.get_match_innings(match_id))
                 return
 
-            match = re.fullmatch(r"/api/replays/([0-9a-f\-]+)", self.path)
+            match = re.fullmatch(r"/api/replays/([0-9a-f\-]+)", route)
             if match:
                 session_id = match.group(1)
                 _json_response(self, HTTPStatus.OK, self._app().api.get_replay(session_id))
                 return
 
-            match = re.fullmatch(r"/api/replays/([0-9a-f\-]+)/ledger", self.path)
+            match = re.fullmatch(r"/api/replays/([0-9a-f\-]+)/ledger", route)
             if match:
                 session_id = match.group(1)
                 _json_response(self, HTTPStatus.OK, self._app().api.get_replay_ledger(session_id))
                 return
 
-            match = re.fullmatch(r"/api/replays/([0-9a-f\-]+)/summary", self.path)
+            match = re.fullmatch(r"/api/replays/([0-9a-f\-]+)/summary", route)
             if match:
                 session_id = match.group(1)
                 replay = self._app().api.get_replay(session_id)
                 _json_response(self, HTTPStatus.OK, {"session_id": session_id, "summary": replay["summary"]})
                 return
 
-            self._serve_static()
+            if route == "/api/players":
+                search = str(query.get("query", [""])[0])
+                limit = int(query.get("limit", [50])[0])
+                _json_response(self, HTTPStatus.OK, self._app().api.get_players(query=search, limit=limit))
+                return
+
+            match = re.fullmatch(r"/api/players/(.+)", route)
+            if match:
+                player_name = unquote(match.group(1))
+                _json_response(self, HTTPStatus.OK, self._app().api.get_player(player_name))
+                return
+
+            status_code = self._serve_static()
         except ValueError as exc:
+            status_code = HTTPStatus.NOT_FOUND
             _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("not_found", str(exc)))
         except Exception as exc:  # pragma: no cover - defensive
+            status_code = HTTPStatus.INTERNAL_SERVER_ERROR
             _json_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, _error_payload("internal_error", str(exc)))
+        finally:
+            log_http("GET", self.path, int(status_code), started)
 
     def do_POST(self) -> None:  # noqa: N802
+        started = time.perf_counter()
+        status_code = HTTPStatus.OK
         try:
             if self.path == "/api/replays":
                 payload = _read_json_body(self)
@@ -117,6 +144,7 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
                     start_over_number=None if start_over is None else int(start_over),
                     start_ball_number=None if start_ball is None else int(start_ball),
                 )
+                status_code = HTTPStatus.CREATED
                 _json_response(self, HTTPStatus.CREATED, result)
                 return
 
@@ -140,33 +168,40 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
 
             _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("not_found", "Unknown endpoint"))
         except KeyError as exc:
+            status_code = HTTPStatus.BAD_REQUEST
             _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload("bad_request", f"Missing required field: {exc}"))
         except json.JSONDecodeError:
+            status_code = HTTPStatus.BAD_REQUEST
             _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload("bad_request", "Invalid JSON payload"))
         except ValueError as exc:
             message = str(exc)
             status = HTTPStatus.NOT_FOUND if "not found" in message else HTTPStatus.BAD_REQUEST
+            status_code = status
             _json_response(self, status, _error_payload("invalid_request", message))
         except StopIteration as exc:
+            status_code = HTTPStatus.CONFLICT
             _json_response(self, HTTPStatus.CONFLICT, _error_payload("completed", str(exc)))
         except Exception as exc:  # pragma: no cover - defensive
+            status_code = HTTPStatus.INTERNAL_SERVER_ERROR
             _json_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, _error_payload("internal_error", str(exc)))
+        finally:
+            log_http("POST", self.path, int(status_code), started)
 
-    def _serve_static(self) -> None:
+    def _serve_static(self) -> int:
         app = self._app()
         path = self.path.split("?", 1)[0]
         if path == "/":
             rel = "index.html"
-        elif path in ("/app.js", "/styles.css"):
+        elif path in ("/app.js", "/styles.css", "/player_photos.json"):
             rel = path[1:]
         else:
             _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("not_found", "Unknown endpoint"))
-            return
+            return int(HTTPStatus.NOT_FOUND)
 
         file_path = app.static_dir / rel
         if not file_path.exists():
             _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("not_found", "Static file not found"))
-            return
+            return int(HTTPStatus.NOT_FOUND)
 
         data = file_path.read_bytes()
         content_type = "text/html; charset=utf-8"
@@ -181,6 +216,7 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
+        return int(HTTPStatus.OK)
 
 
 def create_http_server(
@@ -193,6 +229,7 @@ def create_http_server(
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     resolved_static = static_dir or (Path(__file__).resolve().parents[2] / "web")
+    log_event("SERVER", "Creating HTTP server", host=host, port=port, db_path=db_path, static_dir=resolved_static)
     app = TimeMachineHttpApp(conn=conn, static_dir=resolved_static)
 
     class _Handler(TimeMachineRequestHandler):

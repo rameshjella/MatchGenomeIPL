@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 import time
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from typing import Any
 
@@ -57,9 +58,12 @@ def main() -> None:
         create_t, created = _post(base, "/api/replays", {"match_id": match_id, "innings": innings_id})
         session_id = created["session_id"]
 
-        predict_t, _ = _post(base, f"/api/replays/{session_id}/predict")
+        predict_t, first_prediction = _post(base, f"/api/replays/{session_id}/predict")
         reveal_t, _ = _post(base, f"/api/replays/{session_id}/reveal")
         next_predict_t, _ = _post(base, f"/api/replays/{session_id}/predict")
+
+        player_name = quote(str(first_prediction["delivery"]["batter"]))
+        player_t, _ = _get(base, f"/api/players/{player_name}")
 
         step_times = []
         for _ in range(10):
@@ -77,6 +81,7 @@ def main() -> None:
             "prediction_request_seconds": round(predict_t, 6),
             "reveal_request_seconds": round(reveal_t, 6),
             "next_prediction_request_seconds": round(next_predict_t, 6),
+            "player_intelligence_request_seconds": round(player_t, 6),
             "ten_step_replay": {
                 "total_seconds": round(sum(step_times), 6),
                 "average_seconds": round(sum(step_times) / len(step_times), 6),

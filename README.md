@@ -1,62 +1,230 @@
-# MatchGenomeIPL Vertical Slice
+# MatchGenomeIPL
 
-This repository contains a DB-first IPL analytics and prediction backend using the real dataset in `data/ipl_ball_by_ball_data.csv`.
+MatchGenomeIPL is an IPL historical prediction product where you can travel to a real past delivery, see what the model would have predicted **before the ball**, reveal reality, and measure correctness.
 
-## What it does
+## Product
 
-- Ingests deliveries into a local SQLite database with:
-  - raw-record preservation (`raw_deliveries`),
-  - validated core delivery rows (`deliveries`),
-  - rejected row tracking (`rejected_deliveries`).
-- Persists source manifest/fingerprint metadata (`data_sources`, `ingestion_state`) to skip re-ingestion when the source is unchanged.
-- Materializes core entities (`seasons`, `teams`, `players`, `matches`, `innings_summary`) and reusable aggregates.
-- Exposes deterministic analytics and match-state reconstruction immediately before a real delivery.
-- Provides a deterministic baseline next-ball probability model with hierarchical evidence fallback.
-- Adds strict temporal evaluation with knowledge cutoff and online delivery replay.
-- Adds calibrated mixture tuning of global, phase, and hierarchical signals using inner temporal validation.
-- Adds a chronology-based recency weighting experiment for the calibrated mixture.
+MatchGenomeIPL combines:
 
-## Project layout
+- a deterministic next-ball prediction engine,
+- strict chronology-safe replay,
+- evidence and reliability reporting,
+- and a user-facing Time Machine UI over real IPL data.
 
-- `src/matchgenomeipl/database.py` - SQLite schema and connection helpers.
-- `src/matchgenomeipl/validation.py` - schema checks, row normalization, and dataset profiling.
-- `src/matchgenomeipl/ingestion.py` - persistent ingestion lifecycle, source change detection, and derived materialization.
-- `src/matchgenomeipl/analytics.py` - dataset, batter, bowler, and innings analytics.
-- `src/matchgenomeipl/match_state.py` - pre-delivery state reconstruction.
-- `src/matchgenomeipl/prediction.py` - baseline next-ball probability model.
-- `src/matchgenomeipl/chronology.py` - chronology abstraction and diagnostics.
-- `src/matchgenomeipl/evaluation.py` - temporal backtesting and model comparison metrics.
-- `src/matchgenomeipl/time_machine.py` - in-memory replay session lifecycle and deterministic predict/reveal contract.
-- `src/matchgenomeipl/time_machine_api.py` - framework-free API facade for Time Machine capabilities.
-- `src/matchgenomeipl/http_transport.py` - thin HTTP transport exposing Time Machine API endpoints and static web assets.
-- `scripts/run_vertical_slice.py` - real-data execution and proof report.
-- `scripts/run_temporal_evaluation.py` - temporal experiments (e.g. 2024 -> 2025) across baselines.
-- `scripts/prediction_runtime.py` - single-prediction and sequential replay runtime benchmark.
-- `scripts/evaluation_runtime.py` - focused runtime benchmark for temporal evaluation splits.
-- `scripts/run_time_machine_vertical_slice.py` - end-to-end replay flow proof (select, predict, reveal, update).
-- `scripts/time_machine_runtime.py` - replay initialization/predict/reveal runtime benchmark.
-- `scripts/run_time_machine_app.py` - launches the user-facing Time Machine web app on local HTTP.
-- `scripts/time_machine_http_runtime.py` - end-to-end HTTP and UI-loading runtime benchmark.
-- `tests/` - fast tests using local fixtures.
+## Problem It Solves
 
-## Quick start
+Most cricket tools explain what already happened. MatchGenomeIPL answers a different question:
+
+> At this exact historical point, what would the model predict next, and was it right?
+
+## Differentiator
+
+Prediction is shown before reveal, then reality is revealed and scored. This prediction-vs-reality loop is the product center, not an afterthought.
+
+## Implemented Capabilities
+
+- Real IPL dataset support (`2008-2026`, `288,226` deliveries).
+- DB-first runtime using SQLite (`data/ipl.sqlite3`).
+- Source-aware ingestion with fingerprinting and unchanged-source skip.
+- Pre-delivery match-state reconstruction.
+- Deterministic hierarchical baseline prediction with evidence and reliability.
+- Time Machine session lifecycle (`predict -> reveal -> update`).
+- HTTP API transport and browser UI.
+- Player Intelligence pages (overview, phase/season splits, matchups, sample sizes).
+
+## Current vs Future Scope
+
+- Implemented now: prediction/reveal replay, player intelligence, logging, startup scripts, benchmarks, tests.
+- Not implemented yet: persistent replay sessions across process restarts, rich random seek UI, broad photo library coverage.
+
+## System Architecture
+
+```mermaid
+flowchart TD
+    UI[Web UI] --> HTTP[HTTP Transport]
+    Startup[start.ps1 / start.sh] --> Runner[run_time_machine_app.py]
+    Runner --> HTTP
+    HTTP --> API[TimeMachineAPI]
+    API --> Service[TimeMachineService]
+    Service --> Session[SequentialPredictionSession]
+    Session --> Engine[Prediction Engine]
+    Service --> Player[Player Intelligence Queries]
+    Engine --> DB[(SQLite)]
+    Player --> DB
+    DB --> Tables[deliveries / matches / innings / players / aggregates]
+```
+
+## Data Ingestion Flow
+
+```mermaid
+flowchart TD
+    CSV[IPL CSV] --> Fingerprint[Fingerprint + source change detection]
+    Fingerprint --> Validation[Schema + row validation]
+    Validation --> Ingest[Atomic ingestion refresh]
+    Ingest --> Aggregates[Derived aggregates materialization]
+    Aggregates --> ReadyDB[Ready SQLite database]
+```
+
+## Prediction Lifecycle Flow
+
+```mermaid
+flowchart TD
+    State[Historical pre-ball state] --> Predict[Predict]
+    Predict --> Visible[Prediction visible]
+    Visible --> Reveal[Reveal ball]
+    Reveal --> Actual[Actual outcome]
+    Actual --> Score[Correct / Incorrect]
+    Score --> Advance[Advance to next delivery]
+```
+
+## Runtime Flow (Startup)
+
+1. Resolve repository root and runtime paths.
+2. Open SQLite DB.
+3. Run `ensure_dataset_ready` against `data/ipl_ball_by_ball_data.csv`.
+4. If source unchanged, ingestion is skipped.
+5. Start HTTP server and serve UI/API.
+
+## Database Notes
+
+Important runtime tables:
+
+- `deliveries`: validated ball-by-ball canonical table.
+- `matches`, `innings_summary`, `players`, `teams`, `seasons`: discovery and context.
+- `batter_stats_agg`, `bowler_stats_agg`, matchup aggregate tables: fast intelligence lookup.
+- `ingestion_runs`, `data_sources`, `ingestion_state`: source/change tracking and readiness.
+
+## Logging
+
+Structured logs are emitted in the same terminal.
+
+- Startup: environment, DB path/status, ingestion result, URL, startup duration.
+- HTTP: method, route, status, duration.
+- SQL (optional): query + params + row count + duration.
+
+Configuration:
+
+- `MATCHGENOME_LOG_LEVEL=INFO|DEBUG|WARN|ERROR`
+- `MATCHGENOME_SQL_LOG=1` to enable SQL logging
+
+Example output:
+
+```text
+[STARTUP] MatchGenomeIPL Time Machine
+[DATA] Source unchanged - ingestion skipped
+[SERVER] HTTP transport ready | url=http://127.0.0.1:8080
+[HTTP] GET /api/seasons -> 200 | duration_ms=53.05
+[HTTP] POST /api/replays/.../predict -> 200 | duration_ms=647.04
+```
+
+Secrets are not logged; runtime does not emit credential values.
+
+## Startup
+
+### Windows
 
 ```powershell
-python -m unittest discover -s tests -v
-python scripts/run_vertical_slice.py
-python scripts/run_temporal_evaluation.py
-python scripts/prediction_runtime.py
-python scripts/evaluation_runtime.py
-python scripts/run_time_machine_vertical_slice.py
-python scripts/time_machine_runtime.py
+.\start.ps1
+```
+
+### Linux/macOS
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+### Direct runner (alternative)
+
+```powershell
 python scripts/run_time_machine_app.py
+```
+
+Open `http://127.0.0.1:8080`.
+
+## API Surface (Current)
+
+- `GET /api/seasons`
+- `GET /api/seasons/{season_id}/matches`
+- `GET /api/matches/{match_id}`
+- `GET /api/matches/{match_id}/innings`
+- `POST /api/replays`
+- `GET /api/replays/{session_id}`
+- `POST /api/replays/{session_id}/predict`
+- `POST /api/replays/{session_id}/reveal`
+- `POST /api/replays/{session_id}/restart`
+- `GET /api/replays/{session_id}/ledger`
+- `GET /api/replays/{session_id}/summary`
+- `GET /api/players`
+- `GET /api/players/{player_name}`
+
+## Player Intelligence
+
+Player metrics are derived from SQLite (no fabricated data), including:
+
+- overview: matches, batting and bowling core metrics,
+- batting/bowling season and phase splits,
+- outcome distributions,
+- matchup evidence with sample-size thresholds.
+
+### Player Photo Strategy
+
+- Local photo map file: `web/player_photos.json`.
+- If mapped: serve local/static image URL.
+- If not mapped: graceful initials placeholder avatar.
+- No external photo API dependency is required at runtime.
+
+## Performance (Measured)
+
+Recent measured values (real DB, local run):
+
+- unchanged startup path: ~`0.003s` (source unchanged skip).
+- first prediction request: ~`0.65-0.72s`.
+- reveal request: ~`0.002-0.005s`.
+- next prediction request: ~`0.001-0.003s`.
+- 10-step replay loop over HTTP: ~`0.038-0.083s` total.
+- discovery endpoints typically milliseconds.
+
+Run benchmarks:
+
+```powershell
+python scripts/prediction_runtime.py
+python scripts/time_machine_runtime.py
 python scripts/time_machine_http_runtime.py
 ```
 
-Open `http://127.0.0.1:8080` after starting `run_time_machine_app.py` to use the Time Machine replay UI.
+## Development and Testing
 
-The vertical slice script prints JSON with ingestion/runtime status, analytics examples, one reconstructed pre-delivery state, and one baseline prediction result.
-The temporal evaluation script prints JSON with cutoff-aware evaluation metrics for global, phase, and hierarchical baselines.
-It also includes calibrated-mixture weights, validation diagnostics, and improvement deltas versus phase/hierarchical baselines.
-It now also reports time-decayed mixture tuning/results and deltas versus the existing calibrated mixture.
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Additional utilities:
+
+```powershell
+python scripts/run_vertical_slice.py
+python scripts/run_temporal_evaluation.py
+python scripts/run_time_machine_vertical_slice.py
+```
+
+## Limitations
+
+- Replay sessions are in-memory (not persisted across process restart).
+- Some match metadata (venue/date/toss) is unavailable in local dataset.
+- Player photo catalog is intentionally conservative; placeholders are default.
+- Timeline focuses on efficient recent context rather than unrestricted deep seeking.
+
+## Repository Layout
+
+- `src/matchgenomeipl/database.py` - schema and DB helpers.
+- `src/matchgenomeipl/ingestion.py` - source-aware ingestion lifecycle.
+- `src/matchgenomeipl/prediction.py` - prediction and sequential replay core.
+- `src/matchgenomeipl/time_machine.py` - replay session service domain.
+- `src/matchgenomeipl/time_machine_api.py` - API facade.
+- `src/matchgenomeipl/http_transport.py` - HTTP + static transport.
+- `src/matchgenomeipl/player_intelligence.py` - player intelligence queries.
+- `src/matchgenomeipl/runtime_logging.py` - structured startup/http/sql logging.
+- `web/` - user-facing Time Machine interface.
+- `scripts/` - app runners and benchmark scripts.
+- `tests/` - unit/integration/smoke tests.
 

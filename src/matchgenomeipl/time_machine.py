@@ -5,10 +5,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 import sqlite3
+import time
 from typing import Any
 from uuid import uuid4
 
+from .player_intelligence import get_player_intelligence, list_players
 from .prediction import SequentialPredictionSession
+from .runtime_logging import log_sql
 
 
 class ReplayStatus(str, Enum):
@@ -233,15 +236,28 @@ class TimeMachineService:
         self.conn = conn
         self._sessions: dict[str, ReplaySession] = {}
 
+    def _fetchall(self, operation: str, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+        started = time.perf_counter()
+        rows = self.conn.execute(sql, params).fetchall()
+        log_sql(operation, sql, params, started, row_count=len(rows))
+        return rows
+
+    def _fetchone(self, operation: str, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+        started = time.perf_counter()
+        row = self.conn.execute(sql, params).fetchone()
+        log_sql(operation, sql, params, started, row_count=0 if row is None else 1)
+        return row
+
     def list_seasons(self) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
+        rows = self._fetchall(
+            "list_seasons",
             """
             SELECT season_id, COUNT(DISTINCT match_id) AS match_count, COUNT(*) AS delivery_count
             FROM deliveries
             GROUP BY season_id
             ORDER BY season_id
-            """
-        ).fetchall()
+            """,
+        )
         return [
             {
                 "season_id": int(r["season_id"]),
@@ -252,7 +268,8 @@ class TimeMachineService:
         ]
 
     def list_matches(self, season_id: int) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
+        rows = self._fetchall(
+            "list_matches",
             """
             SELECT
                 m.match_id,
@@ -268,7 +285,7 @@ class TimeMachineService:
             ORDER BY m.match_id
             """,
             (season_id,),
-        ).fetchall()
+        )
         return [
             {
                 "season_id": int(r["season_id"]),
@@ -281,14 +298,15 @@ class TimeMachineService:
         ]
 
     def get_match(self, match_id: int) -> dict[str, Any]:
-        row = self.conn.execute(
+        row = self._fetchone(
+            "get_match",
             """
             SELECT m.match_id, m.season_id, m.is_super_over_match
             FROM matches m
             WHERE m.match_id = ?
             """,
             (match_id,),
-        ).fetchone()
+        )
         if row is None:
             raise ValueError("match_id not found")
 
@@ -304,7 +322,8 @@ class TimeMachineService:
         }
 
     def list_innings(self, match_id: int) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
+        rows = self._fetchall(
+            "list_innings",
             """
             SELECT season_id, match_id, innings, team_batting, team_bowling, deliveries, legal_balls, runs, wickets
             FROM innings_summary
@@ -312,7 +331,7 @@ class TimeMachineService:
             ORDER BY innings
             """,
             (match_id,),
-        ).fetchall()
+        )
         if not rows:
             raise ValueError("match_id not found")
         return [
@@ -337,14 +356,15 @@ class TimeMachineService:
         start_over_number: int | None = None,
         start_ball_number: int | None = None,
     ) -> dict[str, Any]:
-        row = self.conn.execute(
+        row = self._fetchone(
+            "create_replay_session",
             """
             SELECT season_id
             FROM innings_summary
             WHERE match_id = ? AND innings = ?
             """,
             (match_id, innings),
-        ).fetchone()
+        )
         if row is None:
             raise ValueError("match_id/innings not found")
 
@@ -404,4 +424,10 @@ class TimeMachineService:
     def replay_ledger(self, session_id: str) -> list[dict[str, Any]]:
         session = self.get_replay_session(session_id)
         return [entry.__dict__.copy() for entry in session.ledger]
+
+    def list_players(self, query: str = "", limit: int = 50) -> list[dict[str, Any]]:
+        return list_players(self.conn, query=query, limit=limit)
+
+    def get_player(self, player_name: str) -> dict[str, Any]:
+        return get_player_intelligence(self.conn, player_name)
 

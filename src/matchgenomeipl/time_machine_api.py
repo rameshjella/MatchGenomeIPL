@@ -52,3 +52,13 @@ class TimeMachineAPI:
     def get_replay_ledger(self, session_id: str) -> dict[str, Any]:
         return {"session_id": session_id, "entries": self.service.replay_ledger(session_id)}
 
+    def get_players(self, query: str = "", limit: int = 50) -> dict[str, Any]:
+        return {
+            "query": query,
+            "limit": limit,
+            "players": self.service.list_players(query=query, limit=limit),
+        }
+
+    def get_player(self, player_name: str) -> dict[str, Any]:
+        return self.service.get_player(player_name)
+
