@@ -48,7 +48,7 @@ body {
 
 .brand h1 {
   margin: 0;
-  font-size: 1.7rem;
+  font-size: 2rem;
   letter-spacing: 0.01em;
 }
 
@@ -58,11 +58,22 @@ body {
 }
 
 .eyebrow {
-  margin: 0;
+  margin: 4px 0 0;
   color: #b9c8f6;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+  font-size: 0.95rem;
+  text-transform: none;
+}
+
+.intro {
+  display: grid;
+  gap: 8px;
+}
+
+.intro-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .mode-nav {
@@ -162,9 +173,11 @@ button:disabled {
 
 .match-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 8px;
   margin-bottom: 12px;
+  max-height: 420px;
+  overflow: auto;
 }
 
 .match-card {
@@ -173,6 +186,8 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px;
+  display: grid;
+  gap: 4px;
 }
 
 .match-card.active {
@@ -197,6 +212,17 @@ button:disabled {
 .match-meta,
 .match-id {
   font-size: 0.84rem;
+}
+
+.match-open {
+  color: #d7e4ff;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.match-note {
+  color: #98a9da;
+  font-size: 0.78rem;
 }
 
 .match-header h2 {
@@ -510,6 +536,18 @@ button:disabled {
   font-size: 0.87rem;
 }
 
+.insight-list {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  padding: 10px;
+}
+
+.insight-list p {
+  margin: 6px 0;
+  color: var(--muted);
+}
+
 .stats-grid {
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
 }
@@ -576,6 +614,10 @@ button:disabled {
   }
 
   .mode-nav button {
+    flex: 1;
+  }
+
+  .intro-actions button {
     flex: 1;
   }
 }

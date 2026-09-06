@@ -100,6 +100,12 @@ The Time Machine UI is organized as a focused workspace:
 
 Technical evidence is available through progressive disclosure in the `Evidence` tab.
 
+## Known Data Limits
+
+- The current ball-by-ball source stores many teams as numeric identifiers rather than canonical franchise labels.
+- Match discovery and replay therefore render these as explicit team IDs (for example, `Team 129`) to avoid inventing unsupported names.
+- Player image handling remains explicit: local illustration, verified photo (if available), or fallback avatar.
+
 ## Runtime Flow (Startup)
 
 1. Resolve repository root and runtime paths.

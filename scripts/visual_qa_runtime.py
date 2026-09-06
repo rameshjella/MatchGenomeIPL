@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 import time
+import traceback
 from pathlib import Path
 
 from selenium import webdriver
@@ -65,10 +67,25 @@ class VisualQaRunner:
         self.wait.until(EC.visibility_of_element_located((By.ID, "matchCards")))
         self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#matchCards .match-card")) > 0)
 
+        self.results["checks"]["five_second_branding"] = {
+            "h1": self._text(".brand h1"),
+            "descriptor": self._text(".brand .eyebrow"),
+        }
+        self.results["checks"]["intro_paths_present"] = {
+            "explore_match": self.driver.find_element(By.ID, "exploreMatchBtn").is_displayed(),
+            "players": self.driver.find_element(By.ID, "goPlayersIntroBtn").is_displayed(),
+        }
+
         self._save("01_landing")
         self._check_overflow("landing")
 
         cards = self.driver.find_elements(By.CSS_SELECTOR, "#matchCards .match-card")
+        first_teams_text = cards[0].find_element(By.CSS_SELECTOR, ".match-teams").text.strip()
+        self.results["checks"]["first_match_identity"] = {
+            "text": first_teams_text,
+            "raw_numeric_vs_numeric": bool(re.fullmatch(r"\d+\s+vs\s+\d+", first_teams_text)),
+            "has_team_prefix": "Team " in first_teams_text,
+        }
         cards[0].click()
         self.wait.until(lambda d: d.find_element(By.ID, "inningsSelect").get_attribute("value") is not None)
         self._save("02_match_discovery")
@@ -93,6 +110,7 @@ class VisualQaRunner:
         self.driver.find_element(By.ID, "tabPredictionBtn").click()
         self.driver.find_element(By.ID, "revealBtn").click()
         self.wait.until(lambda d: "Actual Outcome" in d.find_element(By.ID, "actualBlock").text)
+        self.results["checks"]["replay_accuracy_semantics"] = self._text("#accuracyValue")
         self._save("05_reveal")
         self._check_overflow("reveal")
 
@@ -132,6 +150,30 @@ class VisualQaRunner:
         self._save("09_back_to_replay")
         self._check_overflow("back_to_replay")
 
+        # Journey B: open Players from nav, search, open profile, traverse tabs.
+        self.driver.get(f"{BASE_URL}#view=player")
+        self.wait.until(EC.visibility_of_element_located((By.ID, "playerView")))
+        q = self.driver.find_element(By.ID, "playerSearchInput")
+        q.clear()
+        q.send_keys("gang")
+        q.send_keys(Keys.ENTER)
+        try:
+            self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")) > 0)
+        except TimeoutException:
+            self.driver.find_element(By.ID, "playerSearchBtn").click()
+            self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")) > 0)
+        first_result = self.driver.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")[0]
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", first_result)
+        self.driver.execute_script("arguments[0].click();", first_result)
+        self.wait.until(lambda d: d.find_element(By.ID, "playerPanel").is_displayed())
+        for tab_id in ["playerTabOverviewBtn", "playerTabBattingBtn", "playerTabBowlingBtn", "playerTabMatchupsBtn", "playerTabSeasonsBtn", "playerTabPhasesBtn"]:
+            nodes = self.driver.find_elements(By.ID, tab_id)
+            if nodes and nodes[0].is_displayed():
+                nodes[0].click()
+                time.sleep(0.2)
+        self._save("10_players_search_journey")
+        self._check_overflow("players_search_journey")
+
         # Keyboard focus progression sanity check.
         body = self.driver.find_element(By.TAG_NAME, "body")
         ActionChains(self.driver).move_to_element(body).click(body).perform()
@@ -161,8 +203,14 @@ def main() -> None:
         runner = VisualQaRunner(width, height, label)
         try:
             report["runs"].append(runner.run())
-        except TimeoutException as exc:
-            report["runs"].append({"viewport": {"width": width, "height": height, "label": label}, "error": str(exc)})
+        except Exception as exc:
+            report["runs"].append(
+                {
+                    "viewport": {"width": width, "height": height, "label": label},
+                    "error": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+            )
         finally:
             runner.close()
 

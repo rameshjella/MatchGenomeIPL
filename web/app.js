@@ -44,6 +44,7 @@ const state = {
   selectedInnings: null,
   selectedTimelineIndex: -1,
   playerCapabilities: { hasBatting: false, hasBowling: false },
+  hasTeamIdOnlyData: false,
 };
 
 const els = {
@@ -53,6 +54,11 @@ const els = {
   selectedMatchMeta: document.getElementById("selectedMatchMeta"),
   matchCards: document.getElementById("matchCards"),
   startReplayBtn: document.getElementById("startReplayBtn"),
+  exploreMatchBtn: document.getElementById("exploreMatchBtn"),
+  goPlayersIntroBtn: document.getElementById("goPlayersIntroBtn"),
+  productIntro: document.getElementById("productIntro"),
+  matchListSummary: document.getElementById("matchListSummary"),
+  teamDataNotice: document.getElementById("teamDataNotice"),
   statusBanner: document.getElementById("statusBanner"),
   timeMachineView: document.getElementById("timeMachineView"),
   playerView: document.getElementById("playerView"),
@@ -67,6 +73,7 @@ const els = {
   panelEvidence: document.getElementById("panelEvidence"),
   matchTitle: document.getElementById("matchTitle"),
   matchSubline: document.getElementById("matchSubline"),
+  replayTeamNotice: document.getElementById("replayTeamNotice"),
   teamsValue: document.getElementById("teamsValue"),
   inningsValue: document.getElementById("inningsValue"),
   scoreValue: document.getElementById("scoreValue"),
@@ -164,8 +171,28 @@ function clearStatus() {
   els.statusBanner.hidden = true;
 }
 
+function isNumericToken(value) {
+  return /^\d+$/.test(String(value || "").trim());
+}
+
 function teamLabel(name, fallback) {
-  return name && String(name).trim() ? String(name) : fallback;
+  if (!name || !String(name).trim()) return fallback;
+  const raw = String(name).trim();
+  return isNumericToken(raw) ? `Team ${raw}` : raw;
+}
+
+function hasUnresolvedTeamName(teamName) {
+  return isNumericToken(teamName);
+}
+
+function applyTeamDataNotice() {
+  const msg = "Source dataset stores team identifiers (not canonical franchise names) for many matches. Team IDs are shown explicitly to avoid fabricating labels.";
+  els.teamDataNotice.hidden = !state.hasTeamIdOnlyData;
+  els.replayTeamNotice.hidden = !state.hasTeamIdOnlyData;
+  if (state.hasTeamIdOnlyData) {
+    els.teamDataNotice.textContent = msg;
+    els.replayTeamNotice.textContent = msg;
+  }
 }
 
 function matchTitleFromMeta(meta) {
@@ -206,6 +233,7 @@ function setView(view) {
   state.view = view;
   const playerMode = view === "player";
   els.timeMachineView.hidden = playerMode;
+  els.productIntro.hidden = playerMode;
   els.playerView.hidden = !playerMode;
   els.goTimeMachineBtn.classList.toggle("primary", !playerMode);
   els.goPlayerIntelligenceBtn.classList.toggle("primary", playerMode);
@@ -311,28 +339,34 @@ function renderMatchCards() {
   });
 
   els.matchCards.innerHTML = "";
+  els.matchListSummary.textContent = `${filtered.length} match${filtered.length === 1 ? "" : "es"} available`;
   if (filtered.length === 0) {
     els.matchCards.innerHTML = "<p class='muted'>No matches found for this filter.</p>";
     return;
   }
 
   filtered.forEach((m) => {
+    const teamA = teamLabel(m.team_a, "Team A");
+    const teamB = teamLabel(m.team_b, "Team B");
+    const unresolved = hasUnresolvedTeamName(m.team_a) || hasUnresolvedTeamName(m.team_b);
     const card = document.createElement("button");
     card.type = "button";
     card.className = `match-card ${state.selectedMatchId === m.match_id ? "active" : ""}`;
     card.innerHTML = `
       <div class='match-teams'>
-        <strong>${teamLabel(m.team_a, "Team A")}</strong>
+        <strong>${teamA}</strong>
         <span>vs</span>
-        <strong>${teamLabel(m.team_b, "Team B")}</strong>
+        <strong>${teamB}</strong>
       </div>
       <div class='match-meta'>${m.season_id} · Match ${m.season_match_number}${m.is_super_over_match ? " · Super Over" : ""}</div>
       <div class='match-id'>Match ID ${m.match_id} · ${m.innings_count} innings · ${m.deliveries} deliveries</div>
+      <div class='match-open'>Open Match</div>
+      ${unresolved ? "<div class='match-note'>Team names unavailable in source schema (ID-based).</div>" : ""}
     `;
     card.onclick = async () => {
       state.selectedMatchId = Number(m.match_id);
       state.selectedMatch = m;
-      els.selectedMatchMeta.textContent = `${matchTitleFromMeta(m)} · ${m.season_id} · Match ID ${m.match_id}`;
+      els.selectedMatchMeta.textContent = `${matchTitleFromMeta(m)} · ${m.season_id} · Match ${m.season_match_number} · Match ID ${m.match_id}`;
       renderMatchCards();
       await loadInnings();
     };
@@ -435,14 +469,14 @@ function renderPrediction(pred) {
     .forEach(([label, value]) => {
       const row = document.createElement("div");
       row.className = `prob-row ${label === top ? "top" : ""}`;
-      row.innerHTML = `<span>${label}</span><div class='bar'><span style='width:${Math.max(2, value * 100)}%'></span></div><strong>${toPct(value)}</strong>`;
+      row.innerHTML = `<span>${outcomeDisplay(label)}</span><div class='bar'><span style='width:${Math.max(2, value * 100)}%'></span></div><strong>${toPct(value)}</strong>`;
       els.probabilityBars.appendChild(row);
     });
 
   els.whyBlock.innerHTML =
-    `<strong>Why MatchGenome predicted ${outcomeDisplay(top)}</strong><br />` +
-    `The strongest historical signal came from <strong>${evidenceLabel(pred.prediction.chosen_evidence_level)}</strong>.<br />` +
-    `<strong>${sample}</strong> similar deliveries informed this call (<strong>${sampleLabel(sample)}</strong>).`;
+    `<strong>Why?</strong><br />` +
+    `${outcomeDisplay(top)} was most likely because comparable historical deliveries most often ended with that result.<br />` +
+    `<strong>${sample}</strong> comparable deliveries · <strong>${sampleLabel(sample)}</strong>`;
 
   els.evidenceBlock.innerHTML =
     `<div>Primary evidence source: <strong>${evidenceLabel(pred.prediction.chosen_evidence_level)}</strong></div>` +
@@ -461,23 +495,34 @@ function renderPrediction(pred) {
     `<div>Probability vector: <strong>${JSON.stringify(probs)}</strong></div>`;
 }
 
-function renderState(pred) {
-  const d = pred.delivery;
-  const s = pred.pre_delivery_state;
-  const matchMeta = state.selectedMatch;
-  const title = matchMeta ? matchTitleFromMeta(matchMeta) : `${s.team_batting} vs ${s.team_bowling}`;
-  els.matchTitle.textContent = title;
-  els.matchSubline.textContent = `${d.season_id} · Match ID ${d.match_id}`;
-  els.teamsValue.textContent = title;
-  els.inningsValue.textContent = String(d.innings);
-  els.scoreValue.textContent = `${s.score}/${s.wickets}`;
-  els.overBallValue.textContent = `${d.over_number}.${d.ball_number}`;
+function renderReplayHeaderMetrics() {
   const remaining = Number(state.sessionMeta?.current_state?.remaining_deliveries ?? 0);
   const revealed = Number(state.sessionMeta?.predictions_revealed ?? 0);
   const total = remaining + revealed;
   els.progressHeaderValue.textContent = total > 0 ? `${revealed}/${total} balls` : "-";
-  const acc = Number(state.sessionMeta?.summary?.accuracy || 0);
-  els.accuracyValue.textContent = Number(state.sessionMeta?.summary?.predictions_revealed || 0) > 0 ? `${(acc * 100).toFixed(1)}%` : "-";
+
+  const summary = state.sessionMeta?.summary || {};
+  const revealedCount = Number(summary.predictions_revealed || 0);
+  const correctCount = Number(summary.correct_predictions || 0);
+  const acc = Number(summary.accuracy || 0);
+  els.accuracyValue.textContent = revealedCount > 0 ? `${correctCount}/${revealedCount} · ${(acc * 100).toFixed(1)}%` : "-";
+
+  return remaining;
+}
+
+function renderState(pred) {
+  const d = pred.delivery;
+  const s = pred.pre_delivery_state;
+  const matchMeta = state.selectedMatch;
+  const title = matchMeta ? matchTitleFromMeta(matchMeta) : `${teamLabel(s.team_batting, "Team A")} vs ${teamLabel(s.team_bowling, "Team B")}`;
+  els.matchTitle.textContent = title;
+  const matchNo = matchMeta?.season_match_number ? `Match ${matchMeta.season_match_number}` : `Match ID ${d.match_id}`;
+  els.matchSubline.textContent = `${d.season_id} · ${matchNo} · Match ID ${d.match_id}`;
+  els.teamsValue.textContent = title;
+  els.inningsValue.textContent = String(d.innings);
+  els.scoreValue.textContent = `${s.score}/${s.wickets}`;
+  els.overBallValue.textContent = `${d.over_number}.${d.ball_number}`;
+  const remaining = renderReplayHeaderMetrics();
 
   attachPlayerButton(els.batterValue, d.batter);
   attachPlayerButton(els.nonStrikerValue, d.non_striker);
@@ -494,10 +539,12 @@ function renderReveal(reveal) {
   const outcome = reveal.actual.actual_outcome;
   const correct = Boolean(reveal.comparison.is_correct);
   const verdict = correct ? "Correct" : "Incorrect";
+  const predicted = reveal.comparison?.predicted_top_outcome;
   els.actualBlock.className = `actual-block ${correct ? "correct" : "incorrect"}`;
   els.actualBlock.innerHTML =
     `<div class='reveal-title'>Actual Outcome: <strong>${outcomeDisplay(outcome)}</strong></div>` +
-    `<div>Prediction verdict: <strong>${verdict}</strong></div>` +
+    `<div>Prediction: <strong>${outcomeDisplay(predicted)}</strong></div>` +
+    `<div>Result: <strong>${verdict}</strong></div>` +
     `<div>Total runs: ${reveal.actual.delivery_facts.total_runs} · Wicket: ${reveal.actual.delivery_facts.is_wicket === 1 ? "Yes" : "No"}</div>`;
 }
 
@@ -550,6 +597,32 @@ function metricTile(label, value) {
   return `<div><span>${label}</span><strong>${value ?? "-"}</strong></div>`;
 }
 
+function topOutcomeFromDistribution(outcomes) {
+  const items = Object.entries(outcomes || {}).map(([k, v]) => [k, Number(v || 0)]);
+  items.sort((a, b) => b[1] - a[1]);
+  return items.length && items[0][1] > 0 ? String(items[0][0]) : null;
+}
+
+function strongestBattingPhase(byPhase) {
+  if (!byPhase || !byPhase.length) return null;
+  const ranked = [...byPhase].sort((a, b) => Number(b.strike_rate || 0) - Number(a.strike_rate || 0));
+  return ranked[0];
+}
+
+function strongestBowlingPhase(byPhase) {
+  if (!byPhase || !byPhase.length) return null;
+  const ranked = [...byPhase].sort((a, b) => Number(b.wickets || 0) - Number(a.wickets || 0));
+  return ranked[0];
+}
+
+function peakSeason(battingBySeason, bowlingBySeason) {
+  const battingPeak = battingBySeason && battingBySeason.length ? [...battingBySeason].sort((a, b) => Number(b.runs || 0) - Number(a.runs || 0))[0] : null;
+  if (battingPeak && Number(battingPeak.runs || 0) > 0) return `Peak batting season: ${battingPeak.season_id} (${battingPeak.runs} runs)`;
+  const bowlingPeak = bowlingBySeason && bowlingBySeason.length ? [...bowlingBySeason].sort((a, b) => Number(b.wickets || 0) - Number(a.wickets || 0))[0] : null;
+  if (bowlingPeak && Number(bowlingPeak.wickets || 0) > 0) return `Peak bowling season: ${bowlingPeak.season_id} (${bowlingPeak.wickets} wickets)`;
+  return null;
+}
+
 async function loadPlayer(name) {
   if (!name) {
     els.playerPanel.hidden = true;
@@ -590,21 +663,39 @@ async function loadPlayer(name) {
   els.playerPhotoMeta.textContent = photoMetaLabel(header.photo);
 
   const ov = payload.overview;
-  els.playerCareerContext.textContent = `${metricDisplay(ov.matches)} matches · Batting innings ${metricDisplay(ov.batting_innings)} · Bowling innings ${metricDisplay(ov.bowling_innings)}`;
-  els.playerOverview.innerHTML = [
-    metricTile("Matches", ov.matches),
-    metricTile("Batting runs", ov.batting.runs),
-    metricTile("Batting balls", ov.batting.balls),
-    metricTile("Batting SR", ov.batting.strike_rate),
-    metricTile("Batting average", ov.batting.average),
-    metricTile("Dismissals", ov.batting.dismissals),
-    metricTile("Boundaries", ov.batting.boundaries),
-    metricTile("Wickets", ov.bowling.wickets),
-    metricTile("Runs conceded", ov.bowling.runs_conceded),
-    metricTile("Bowling balls", ov.bowling.legal_balls),
-    metricTile("Economy", ov.bowling.economy),
-    metricTile("Bowling SR", ov.bowling.strike_rate),
-  ].join("");
+  const battingPeak = strongestBattingPhase(payload.batting_intelligence?.by_phase || []);
+  const bowlingPeak = strongestBowlingPhase(payload.bowling_intelligence?.by_phase || []);
+  const topBattingOutcome = topOutcomeFromDistribution(payload.batting_intelligence?.outcome_distribution || {});
+  const topBowlingOutcome = topOutcomeFromDistribution(payload.bowling_intelligence?.outcome_distribution || {});
+  const peak = peakSeason(payload.batting_intelligence?.by_season || [], payload.bowling_intelligence?.by_season || []);
+
+  els.playerCareerContext.textContent =
+    Number(ov.batting.runs || 0) > 0
+      ? `${metricDisplay(ov.batting.runs)} runs · ${metricDisplay(ov.batting.strike_rate)} SR over ${metricDisplay(ov.batting.balls)} balls`
+      : Number(ov.bowling.wickets || 0) > 0
+        ? `${metricDisplay(ov.bowling.wickets)} wickets · ${metricDisplay(ov.bowling.economy)} economy over ${metricDisplay(ov.bowling.legal_balls)} balls`
+        : `${metricDisplay(ov.matches)} matches in dataset`;
+
+  const insights = [
+    battingPeak ? `Strongest batting phase: ${capitalize(battingPeak.phase)} (${metricDisplay(battingPeak.strike_rate)} SR)` : null,
+    bowlingPeak ? `Strongest bowling phase: ${capitalize(bowlingPeak.phase)} (${metricDisplay(bowlingPeak.wickets)} wickets)` : null,
+    peak,
+    topBattingOutcome ? `Most common batting outcome: ${outcomeDisplay(topBattingOutcome)}` : topBowlingOutcome ? `Most common bowling outcome: ${outcomeDisplay(topBowlingOutcome)}` : null,
+  ].filter(Boolean);
+
+  els.playerOverview.innerHTML =
+    `<div class='stats-grid'>
+      ${metricTile("Matches", ov.matches)}
+      ${metricTile("Batting runs", ov.batting.runs)}
+      ${metricTile("Batting SR", ov.batting.strike_rate)}
+      ${metricTile("Wickets", ov.bowling.wickets)}
+      ${metricTile("Economy", ov.bowling.economy)}
+      ${metricTile("Boundaries", ov.batting.boundaries)}
+    </div>
+    <div class='insight-list'>
+      <h5>What stands out</h5>
+      ${insights.length ? insights.map((item) => `<p>${item}</p>`).join("") : "<p>No strong trend signal yet for this player in the current dataset.</p>"}
+    </div>`;
 
   els.battingTitle.hidden = !hasBatting;
   els.bowlingTitle.hidden = !hasBowling;
@@ -757,12 +848,14 @@ async function loadMatches() {
   setStatus("Loading matches...");
   const data = await api.get(`/api/seasons/${seasonId}/matches`);
   state.matches = data.matches;
+  state.hasTeamIdOnlyData = state.matches.some((m) => hasUnresolvedTeamName(m.team_a) || hasUnresolvedTeamName(m.team_b));
+  applyTeamDataNotice();
   state.selectedMatchId = data.matches.length ? Number(data.matches[0].match_id) : null;
   state.selectedMatch = data.matches.length ? data.matches[0] : null;
   renderMatchCards();
   if (state.selectedMatchId !== null) {
     const first = data.matches[0];
-    els.selectedMatchMeta.textContent = `${matchTitleFromMeta(first)} · ${first.season_id} · Match ID ${first.match_id}`;
+    els.selectedMatchMeta.textContent = `${matchTitleFromMeta(first)} · ${first.season_id} · Match ${first.season_match_number} · Match ID ${first.match_id}`;
   }
   clearStatus();
 }
@@ -802,6 +895,20 @@ async function startReplay() {
   state.timeline = [];
   state.selectedTimelineIndex = -1;
   els.replayPanel.hidden = false;
+  if (state.selectedMatch) {
+    els.matchTitle.textContent = matchTitleFromMeta(state.selectedMatch);
+    els.matchSubline.textContent = `${state.selectedMatch.season_id} · Match ${state.selectedMatch.season_match_number} · Match ID ${state.selectedMatch.match_id}`;
+  }
+  els.teamsValue.textContent = state.selectedMatch ? matchTitleFromMeta(state.selectedMatch) : "-";
+  els.inningsValue.textContent = state.selectedInnings ? String(state.selectedInnings.innings) : "-";
+  els.scoreValue.textContent = "0/0";
+  els.overBallValue.textContent = "0.0";
+  els.progressHeaderValue.textContent = "0/0 balls";
+  els.accuracyValue.textContent = "-";
+  els.whyBlock.innerHTML = "<strong>MATCHGENOME PREDICTS</strong><br />Press <strong>Predict Next Ball</strong> to lock the pre-reveal prediction for the next historical delivery.";
+  els.predictedTop.textContent = "READY";
+  els.predictedPct.textContent = "Before reveal";
+  els.probabilityBars.innerHTML = "";
   els.actualBlock.className = "actual-block";
   els.actualBlock.textContent = "Reveal the ball to see actual outcome.";
   setReplayTab("prediction");
@@ -846,6 +953,7 @@ async function revealNext() {
     last.status = reveal.comparison.is_correct ? "correct" : "incorrect";
   }
   await refreshSessionMeta();
+  renderReplayHeaderMetrics();
   updateTimeline();
   setUiState(state.sessionMeta.status === "COMPLETED" ? UiState.COMPLETED : UiState.PREDICTION_REVEALED);
   setStatus(state.sessionMeta.status === "COMPLETED" ? "Innings completed." : "Reveal complete. Continue when ready.");
@@ -881,6 +989,13 @@ function syncRoute() {
 }
 
 function attachEvents() {
+  els.exploreMatchBtn.addEventListener("click", () => {
+    setRoute({ view: "time_machine" });
+    document.getElementById("timeMachineView")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    els.seasonSelect.focus();
+  });
+  els.goPlayersIntroBtn.addEventListener("click", () => setRoute({ view: "player", player: state.activePlayer || "" }));
+
   els.seasonSelect.addEventListener("change", async () => {
     try {
       await loadMatches();
@@ -947,7 +1062,7 @@ async function bootstrap() {
     attachEvents();
     setReplayTab("prediction");
     setUiState(UiState.SELECT_MATCH);
-    setStatus("Choose a season and match, select innings, then start your Time Machine replay.");
+    setStatus("Explore a season and match, then start a replay to see prediction before reality.");
     syncRoute();
   } catch (err) {
     setStatus(err.message || "Unable to initialize app.", "error");
