@@ -83,10 +83,22 @@ flowchart TD
 ```text
 MatchGenomeIPL
   -> Time Machine (predict before reveal)
+  -> Discover via season + match cards (team-first labels)
   -> Click batter / non-striker / bowler
-  -> Player Intelligence (career + contextual evidence)
+  -> Players (Player Intelligence profile with contextual evidence)
   -> Return to Time Machine (same replay context)
 ```
+
+## Time Machine Workspace
+
+The Time Machine UI is organized as a focused workspace:
+
+- discovery: season selector, match search, human-readable match cards, innings picker,
+- replay header: teams, season/match identity, innings, score, delivery progress, prediction accuracy,
+- replay tabs: `Prediction`, `Ball-by-Ball`, `Evidence`,
+- prediction-first storytelling: pre-ball context -> model prediction -> reveal -> correctness.
+
+Technical evidence is available through progressive disclosure in the `Evidence` tab.
 
 ## Runtime Flow (Startup)
 
@@ -182,6 +194,13 @@ Player metrics are derived from SQLite (no fabricated data), including:
 - batting/bowling season and phase splits,
 - outcome distributions,
 - matchup evidence with sample-size thresholds.
+
+UI organization:
+
+- search-first player discovery,
+- premium player header with local photo/fallback avatar,
+- tabbed sections: `Overview`, `Batting`, `Bowling`, `Matchups`,
+- role-aware visibility (batting/bowling sections shown only when relevant).
 
 Metric definitions:
 

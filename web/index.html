@@ -3,102 +3,143 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MatchGenome Time Machine</title>
+    <title>MatchGenomeIPL - Cricket Intelligence Studio</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="app" aria-live="polite">
-      <header class="app-header card">
-        <div>
+      <header class="app-shell card">
+        <div class="brand">
           <p class="eyebrow">MatchGenomeIPL</p>
           <h1>Cricket Intelligence Studio</h1>
-          <p>Move between Time Machine predictions and Player Intelligence without leaving match context.</p>
+          <p>See what MatchGenome predicted before each real IPL ball, reveal reality, and inspect why.</p>
         </div>
         <nav class="mode-nav" aria-label="Product navigation">
-          <button id="goTimeMachineBtn" class="primary" type="button">Time Machine</button>
-          <button id="goPlayerIntelligenceBtn" type="button">Player Intelligence</button>
+          <button id="goTimeMachineBtn" class="primary" type="button" aria-current="page">Time Machine</button>
+          <button id="goPlayerIntelligenceBtn" type="button">Players</button>
         </nav>
       </header>
 
       <section id="statusBanner" class="status card" hidden></section>
 
       <section id="timeMachineView" class="view-stack">
-        <section class="selector card" aria-label="Match selection">
-          <h2>Select Replay</h2>
-          <div class="selector-grid">
+        <section class="selector card" aria-label="Match discovery">
+          <h2>Match Discovery</h2>
+          <p class="muted">Choose a season, find a match by teams, then pick innings to start replay.</p>
+          <div class="selector-grid discovery-grid">
             <label>Season
               <select id="seasonSelect"></select>
             </label>
-            <label>Match
-              <select id="matchSelect"></select>
+            <label>Find match
+              <input id="matchSearchInput" type="search" placeholder="Search by team or match ID" />
             </label>
             <label>Innings
               <select id="inningsSelect"></select>
             </label>
           </div>
-          <button id="startReplayBtn" class="primary">Start Time Machine</button>
+          <div id="selectedMatchMeta" class="selected-match muted">Select a match card to continue.</div>
+          <div id="matchCards" class="match-cards" role="list" aria-label="Match cards"></div>
+          <button id="startReplayBtn" class="primary" disabled>Start Time Machine Replay</button>
         </section>
 
         <section id="replayPanel" class="replay" hidden>
-        <section class="card match-header" aria-label="Match header">
-          <h2 id="matchTitle">Replay</h2>
-          <div class="header-grid">
-            <div><span>Teams</span><strong id="teamsValue">-</strong></div>
-            <div><span>Innings</span><strong id="inningsValue">-</strong></div>
-            <div><span>Score</span><strong id="scoreValue">-</strong></div>
-            <div><span>Over/Ball</span><strong id="overBallValue">-</strong></div>
-          </div>
-        </section>
+          <section class="card match-header" aria-label="Match header">
+            <h2 id="matchTitle">Replay Workspace</h2>
+            <p id="matchSubline" class="muted">Select a match to begin.</p>
+            <div class="header-grid">
+              <div><span>Teams</span><strong id="teamsValue">-</strong></div>
+              <div><span>Innings</span><strong id="inningsValue">-</strong></div>
+              <div><span>Score</span><strong id="scoreValue">-</strong></div>
+              <div><span>Over/Ball</span><strong id="overBallValue">-</strong></div>
+              <div><span>Progress</span><strong id="progressHeaderValue">-</strong></div>
+              <div><span>Prediction Accuracy</span><strong id="accuracyValue">-</strong></div>
+            </div>
+          </section>
 
-        <section class="card timeline" aria-label="Replay timeline">
-          <div class="timeline-header">
-            <h3>Timeline</h3>
-            <div id="progressValue" class="progress-text">0/0 revealed</div>
-          </div>
-          <div class="timeline-summary">
-            <span id="prevBallValue">Previous: -</span>
-            <span id="nextBallValue">Next: -</span>
-          </div>
-          <div class="progress-bar" aria-hidden="true"><span id="progressFill"></span></div>
-          <div id="timelineTrack" class="timeline-track"></div>
-        </section>
+          <section class="workspace-nav card" aria-label="Replay workspace tabs">
+            <button id="tabPredictionBtn" class="tab-btn active" type="button">Prediction</button>
+            <button id="tabBallByBallBtn" class="tab-btn" type="button">Ball-by-Ball</button>
+            <button id="tabEvidenceBtn" class="tab-btn" type="button">Evidence</button>
+          </section>
 
-        <section class="card state" aria-label="Current match state">
-          <h3>Pre-Ball State</h3>
-          <div class="state-grid">
-            <div><span>Batter</span><button id="batterValue" class="link-btn" type="button">-</button></div>
-            <div><span>Non-striker</span><button id="nonStrikerValue" class="link-btn" type="button">-</button></div>
-            <div><span>Bowler</span><button id="bowlerValue" class="link-btn" type="button">-</button></div>
-            <div><span>Phase</span><strong id="phaseValue">-</strong></div>
-            <div><span>Score</span><strong id="stateScoreValue">-</strong></div>
-            <div><span>Wickets</span><strong id="stateWicketsValue">-</strong></div>
-            <div><span>Legal balls</span><strong id="stateBallsValue">-</strong></div>
-            <div><span>Remaining</span><strong id="remainingValue">-</strong></div>
-          </div>
-        </section>
+          <section id="panelPrediction" class="workspace-panel">
+            <section class="card state" aria-label="Current match state">
+              <h3>Before the Ball</h3>
+              <div class="state-grid">
+                <div><span>Batter</span><button id="batterValue" class="link-btn" type="button">-</button></div>
+                <div><span>Non-striker</span><button id="nonStrikerValue" class="link-btn" type="button">-</button></div>
+                <div><span>Bowler</span><button id="bowlerValue" class="link-btn" type="button">-</button></div>
+                <div><span>Phase</span><strong id="phaseValue">-</strong></div>
+                <div><span>Score</span><strong id="stateScoreValue">-</strong></div>
+                <div><span>Wickets</span><strong id="stateWicketsValue">-</strong></div>
+                <div><span>Legal balls</span><strong id="stateBallsValue">-</strong></div>
+                <div><span>Remaining</span><strong id="remainingValue">-</strong></div>
+              </div>
+            </section>
 
-        <section class="card prediction" aria-label="MatchGenome prediction">
-          <h3>What MatchGenome Predicted</h3>
-          <p class="hero"><span id="predictedTop">-</span> <small id="predictedPct">-</small></p>
-          <div id="probabilityBars" class="probability-bars"></div>
-          <div class="why-block" id="whyBlock">Generate a prediction to see evidence-backed explanation.</div>
-          <div class="evidence" id="evidenceBlock"></div>
-        </section>
+            <section class="card prediction" aria-label="MatchGenome prediction">
+              <h3>MatchGenome Predicts</h3>
+              <p class="hero"><span id="predictedTop">-</span> <small id="predictedPct">-</small></p>
+              <div id="probabilityBars" class="probability-bars"></div>
+              <div class="why-block" id="whyBlock">Generate a prediction to see evidence-backed explanation.</div>
+              <div class="control-row">
+                <button id="predictBtn" class="primary">Predict Next Ball</button>
+                <button id="revealBtn" class="accent" disabled>Reveal Ball</button>
+                <button id="nextBtn" disabled>Next Ball</button>
+                <button id="previousBtn" disabled>Previous Revealed</button>
+                <button id="restartBtn">Restart</button>
+              </div>
+            </section>
 
-        <section class="card controls" aria-label="Replay controls">
-          <h3>Replay Control</h3>
-          <div class="control-row">
-            <button id="predictBtn" class="primary">Predict Next Ball</button>
-            <button id="revealBtn" class="accent" disabled>Reveal Ball</button>
-            <button id="nextBtn" disabled>Next Ball</button>
-            <button id="restartBtn">Restart</button>
-          </div>
-        </section>
+            <section class="card actual" aria-label="Actual result">
+              <h3>What Actually Happened</h3>
+              <div id="actualBlock" class="actual-block">Reveal the ball to see actual outcome.</div>
+            </section>
+          </section>
 
-        <section class="card actual" aria-label="Actual result">
-          <h3>What Happened</h3>
-          <div id="actualBlock" class="actual-block">Reveal the ball to see actual outcome.</div>
-        </section>
+          <section id="panelBallByBall" class="workspace-panel" hidden>
+            <section class="card timeline" aria-label="Replay timeline">
+              <div class="timeline-header">
+                <h3>Ball-by-Ball Timeline</h3>
+                <div id="progressValue" class="progress-text">0/0 revealed</div>
+              </div>
+              <div class="timeline-summary">
+                <span id="prevBallValue">Previous: -</span>
+                <span id="nextBallValue">Next: -</span>
+              </div>
+              <div class="progress-bar" aria-hidden="true"><span id="progressFill"></span></div>
+              <div id="timelineTrack" class="timeline-track"></div>
+              <div class="table-wrap">
+                <table class="mini-table" aria-label="Ball by ball replay rows">
+                  <thead>
+                    <tr>
+                      <th>Over</th>
+                      <th>Batter</th>
+                      <th>Bowler</th>
+                      <th>Predicted</th>
+                      <th>Actual</th>
+                      <th>Result</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ballByBallRows">
+                    <tr><td colspan="6" class="muted">No deliveries revealed yet.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+
+          <section id="panelEvidence" class="workspace-panel" hidden>
+            <section class="card" aria-label="Prediction evidence">
+              <h3>Why MatchGenome Predicted This</h3>
+              <div id="evidenceBlock" class="evidence"></div>
+              <div id="distributionBlock" class="evidence"></div>
+              <details id="technicalEvidenceDetails" class="tech-details">
+                <summary>Technical evidence</summary>
+                <div id="technicalEvidenceBlock" class="evidence muted">Predict a ball to populate technical evidence.</div>
+              </details>
+            </section>
+          </section>
         </section>
       </section>
 
@@ -134,13 +175,31 @@
                 </div>
               </div>
             </div>
-            <div id="playerOverview" class="stats-grid"></div>
-            <h4 id="battingTitle">Batting Intelligence</h4>
-            <div id="playerBatting"></div>
-            <h4 id="bowlingTitle">Bowling Intelligence</h4>
-            <div id="playerBowling"></div>
-            <h4>Matchup Intelligence</h4>
-            <div id="playerMatchups"></div>
+            <div class="workspace-nav player-tabs" aria-label="Player intelligence tabs">
+              <button id="playerTabOverviewBtn" class="tab-btn active" type="button">Overview</button>
+              <button id="playerTabBattingBtn" class="tab-btn" type="button">Batting</button>
+              <button id="playerTabBowlingBtn" class="tab-btn" type="button">Bowling</button>
+              <button id="playerTabMatchupsBtn" class="tab-btn" type="button">Matchups</button>
+            </div>
+
+            <section id="playerPanelOverview" class="player-tab-panel">
+              <div id="playerOverview" class="stats-grid"></div>
+            </section>
+
+            <section id="playerPanelBatting" class="player-tab-panel" hidden>
+              <h4 id="battingTitle">Batting Intelligence</h4>
+              <div id="playerBatting"></div>
+            </section>
+
+            <section id="playerPanelBowling" class="player-tab-panel" hidden>
+              <h4 id="bowlingTitle">Bowling Intelligence</h4>
+              <div id="playerBowling"></div>
+            </section>
+
+            <section id="playerPanelMatchups" class="player-tab-panel" hidden>
+              <h4>Matchup Intelligence</h4>
+              <div id="playerMatchups"></div>
+            </section>
           </div>
         </section>
       </section>

@@ -69,6 +69,8 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertIn("Reveal the ball to see actual outcome.", html)
         self.assertIn("Cricket Intelligence Studio", html)
         self.assertIn("Player Intelligence", html)
+        self.assertIn("Match Discovery", html)
+        self.assertIn("matchCards", html)
 
         seasons = self._get_json("/api/seasons")["seasons"]
         season_id = int(seasons[-1]["season_id"])

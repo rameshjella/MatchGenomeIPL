@@ -271,18 +271,33 @@ class TimeMachineService:
         rows = self._fetchall(
             "list_matches",
             """
+            WITH season_match_ids AS (
+                SELECT
+                    m.match_id,
+                    m.season_id,
+                    m.is_super_over_match,
+                    DENSE_RANK() OVER (PARTITION BY m.season_id ORDER BY m.match_id) AS season_match_number
+                FROM matches m
+                WHERE m.season_id = ?
+            )
             SELECT
-                m.match_id,
-                m.season_id,
-                m.is_super_over_match,
+                s.match_id,
+                s.season_id,
+                s.is_super_over_match,
+                s.season_match_number,
+                COALESCE(i1.team_batting, i_any.team_batting) AS team_a,
+                COALESCE(i1.team_bowling, i_any.team_bowling) AS team_b,
                 COUNT(DISTINCT i.innings) AS innings_count,
                 COALESCE(SUM(i.deliveries), 0) AS deliveries
-            FROM matches m
+            FROM season_match_ids s
             LEFT JOIN innings_summary i
-              ON i.match_id = m.match_id AND i.season_id = m.season_id
-            WHERE m.season_id = ?
-            GROUP BY m.match_id, m.season_id, m.is_super_over_match
-            ORDER BY m.match_id
+              ON i.match_id = s.match_id AND i.season_id = s.season_id
+            LEFT JOIN innings_summary i1
+              ON i1.match_id = s.match_id AND i1.season_id = s.season_id AND i1.innings = 1
+            LEFT JOIN innings_summary i_any
+              ON i_any.match_id = s.match_id AND i_any.season_id = s.season_id
+            GROUP BY s.match_id, s.season_id, s.is_super_over_match, s.season_match_number, team_a, team_b
+            ORDER BY s.match_id
             """,
             (season_id,),
         )
@@ -290,6 +305,9 @@ class TimeMachineService:
             {
                 "season_id": int(r["season_id"]),
                 "match_id": int(r["match_id"]),
+                "season_match_number": int(r["season_match_number"]),
+                "team_a": r["team_a"],
+                "team_b": r["team_b"],
                 "is_super_over_match": int(r["is_super_over_match"]),
                 "innings_count": int(r["innings_count"]),
                 "deliveries": int(r["deliveries"]),

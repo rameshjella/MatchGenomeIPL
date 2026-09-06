@@ -46,6 +46,9 @@ class TimeMachineTests(unittest.TestCase):
         matches_2020 = self.api.get_season_matches(2020)["matches"]
         self.assertEqual(len(matches_2020), 1)
         self.assertEqual(matches_2020[0]["match_id"], 1)
+        self.assertIn("team_a", matches_2020[0])
+        self.assertIn("team_b", matches_2020[0])
+        self.assertIn("season_match_number", matches_2020[0])
 
         innings = self.api.get_match_innings(1)["innings"]
         self.assertEqual(len(innings), 1)

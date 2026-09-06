@@ -67,6 +67,9 @@ class HttpTransportTests(unittest.TestCase):
         status, matches = self._get("/api/seasons/2020/matches")
         self.assertEqual(status, 200)
         self.assertEqual(matches["matches"][0]["match_id"], 1)
+        self.assertIn("team_a", matches["matches"][0])
+        self.assertIn("team_b", matches["matches"][0])
+        self.assertIn("season_match_number", matches["matches"][0])
 
         status, innings = self._get("/api/matches/1/innings")
         self.assertEqual(status, 200)
