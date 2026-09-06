@@ -145,6 +145,20 @@ def _update_history(
     history.step += 1
     current_step = history.step
 
+    if history.recency_decay == 1.0:
+        history.global_last_step = current_step
+        history.global_counts[outcome] += 1.0
+
+        history.phase_last_step[phase] = current_step
+        history.phase_counts[phase][outcome] += 1.0
+
+        for level_name, _, fields in HIERARCHICAL_CONTEXTS:
+            context_key = tuple(row[field] for field in fields)
+            scoped_key = (level_name, context_key)
+            history.context_last_step[scoped_key] = current_step
+            history.context_counts[scoped_key][outcome] += 1.0
+        return
+
     history.global_counts = _counter_to_step(
         history.global_counts,
         history.global_last_step,
@@ -178,20 +192,26 @@ def _update_history(
 
 
 def _predict_all_models(history: HistoryState, row: sqlite3.Row, phase: str) -> dict[str, dict[str, Any]]:
-    global_counts = _counter_to_step(
-        history.global_counts,
-        history.global_last_step,
-        history.step,
-        history.recency_decay,
-    )
+    if history.recency_decay == 1.0:
+        global_counts = history.global_counts
+    else:
+        global_counts = _counter_to_step(
+            history.global_counts,
+            history.global_last_step,
+            history.step,
+            history.recency_decay,
+        )
     global_pred = predict_global_baseline_from_counts(global_counts)
 
-    selected_phase_counts = _counter_to_step(
-        history.phase_counts.get(phase, Counter()),
-        history.phase_last_step.get(phase, 0),
-        history.step,
-        history.recency_decay,
-    )
+    if history.recency_decay == 1.0:
+        selected_phase_counts = history.phase_counts.get(phase, Counter())
+    else:
+        selected_phase_counts = _counter_to_step(
+            history.phase_counts.get(phase, Counter()),
+            history.phase_last_step.get(phase, 0),
+            history.step,
+            history.recency_decay,
+        )
     if sum(selected_phase_counts.values()) == 0:
         selected_phase_counts = global_counts
     phase_pred = predict_phase_baseline_from_counts(selected_phase_counts, phase)
@@ -200,13 +220,16 @@ def _predict_all_models(history: HistoryState, row: sqlite3.Row, phase: str) -> 
     for level_name, _, fields in HIERARCHICAL_CONTEXTS:
         context_key = tuple(row[field] for field in fields)
         scoped_key = (level_name, context_key)
-        raw_counter = history.context_counts.get(scoped_key, Counter())
-        context_count_map[scoped_key] = _counter_to_step(
-            raw_counter,
-            history.context_last_step.get(scoped_key, 0),
-            history.step,
-            history.recency_decay,
-        )
+        if history.recency_decay == 1.0:
+            context_count_map[scoped_key] = history.context_counts.get(scoped_key, Counter())
+        else:
+            raw_counter = history.context_counts.get(scoped_key, Counter())
+            context_count_map[scoped_key] = _counter_to_step(
+                raw_counter,
+                history.context_last_step.get(scoped_key, 0),
+                history.step,
+                history.recency_decay,
+            )
 
     hierarchical_pred = predict_hierarchical_from_count_map(
         {
@@ -454,17 +477,18 @@ def tune_mixture_weights(
     config: MixtureTuningConfig | None = None,
     recency_decay: float = 1.0,
     include_contribution: bool | None = None,
+    rows: list[sqlite3.Row] | None = None,
 ) -> dict[str, Any]:
     tuning_config = config or MixtureTuningConfig()
     validation_season = tuning_config.validation_season or knowledge_cutoff.season_id_inclusive
     if validation_season >= evaluation_window.season_id:
         raise ValueError("validation_season must be strictly before evaluation season")
 
-    rows = ordered_deliveries(conn)
+    ordered_rows = rows if rows is not None else ordered_deliveries(conn)
     inner_train_cutoff = KnowledgeCutoff(validation_season - 1)
     inner_eval_window = EvaluationWindow(validation_season)
     initial_history, validation_rows = _rows_split_for_cutoff(
-        rows,
+        ordered_rows,
         inner_train_cutoff,
         inner_eval_window,
         recency_decay=recency_decay,
@@ -510,6 +534,7 @@ def tune_time_decayed_mixture(
     evaluation_window: EvaluationWindow,
     config: MixtureTuningConfig | None = None,
     no_decay_tuning: dict[str, Any] | None = None,
+    rows: list[sqlite3.Row] | None = None,
 ) -> dict[str, Any]:
     tuning_config = config or MixtureTuningConfig()
     candidates = tuple(dict.fromkeys(tuning_config.decay_candidates))
@@ -530,6 +555,7 @@ def tune_time_decayed_mixture(
             config=tuning_config,
             recency_decay=decay,
             include_contribution=False,
+            rows=rows,
         )
         runs.append(run)
 
@@ -580,6 +606,7 @@ def evaluate_temporal_models(
         evaluation_window,
         config=tuning_config,
         include_contribution=False,
+        rows=rows,
     )
     tuning_runtime = round(time.perf_counter() - tuning_started, 3)
     selected_weights = tuning["selected"]["weights"]
@@ -591,6 +618,7 @@ def evaluate_temporal_models(
         evaluation_window,
         config=tuning_config,
         no_decay_tuning=tuning,
+        rows=rows,
     )
     decayed_tuning_runtime = round(time.perf_counter() - decay_tuning_started, 3)
     selected_decay = float(decayed_tuning["selected"]["recency_decay"])
