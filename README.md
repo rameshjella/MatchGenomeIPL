@@ -12,6 +12,8 @@ This repository now contains a first working vertical slice for IPL delivery ana
 - Exposes deterministic analytics and match-state reconstruction immediately before a real delivery.
 - Provides a deterministic baseline next-ball probability model with hierarchical evidence fallback.
 - Adds strict temporal evaluation with knowledge cutoff and online delivery replay.
+- Adds calibrated mixture tuning of global, phase, and hierarchical signals using inner temporal validation.
+- Adds a chronology-based recency weighting experiment for the calibrated mixture.
 
 ## Project layout
 
@@ -37,4 +39,6 @@ python scripts/run_temporal_evaluation.py
 
 The script prints a JSON report with profile findings, ingestion stats, analytics examples, one reconstructed pre-delivery state, and one baseline prediction result.
 The temporal evaluation script prints JSON with cutoff-aware evaluation metrics for global, phase, and hierarchical baselines.
+It also includes calibrated-mixture weights, validation diagnostics, and improvement deltas versus phase/hierarchical baselines.
+It now also reports time-decayed mixture tuning/results and deltas versus the existing calibrated mixture.
 

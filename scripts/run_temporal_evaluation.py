@@ -12,7 +12,7 @@ if str(SRC) not in sys.path:
 
 from matchgenomeipl.chronology import EvaluationWindow, KnowledgeCutoff, chronology_diagnostics
 from matchgenomeipl.database import connect_db
-from matchgenomeipl.evaluation import evaluate_temporal_models
+from matchgenomeipl.evaluation import MixtureTuningConfig, evaluate_temporal_models
 from matchgenomeipl.ingestion import ingest_csv_to_sqlite
 
 
@@ -29,11 +29,18 @@ def summarize_model_block(block: dict) -> dict:
 
 def run_experiment(conn, cutoff_season: int, eval_season: int, max_deliveries: int | None = None) -> dict:
     started = time.perf_counter()
+    tuning_config = MixtureTuningConfig(
+        validation_season=cutoff_season,
+        grid_step=0.1,
+        decay_candidates=(1.0, 0.995),
+        include_contribution_scores=False,
+    )
     result = evaluate_temporal_models(
         conn,
         knowledge_cutoff=KnowledgeCutoff(cutoff_season),
         evaluation_window=EvaluationWindow(eval_season),
         max_deliveries=max_deliveries,
+        tuning_config=tuning_config,
     )
     elapsed = round(time.perf_counter() - started, 3)
 
@@ -48,11 +55,21 @@ def run_experiment(conn, cutoff_season: int, eval_season: int, max_deliveries: i
             "global": summarize_model_block(result["models"]["global"]),
             "phase": summarize_model_block(result["models"]["phase"]),
             "matchgenome_hierarchical": summarize_model_block(result["models"]["matchgenome_hierarchical"]),
+            "calibrated_mixture": summarize_model_block(result["models_additional"]["calibrated_mixture"]),
+            "time_decayed_mixture": summarize_model_block(result["models_additional"]["time_decayed_mixture"]),
         },
         "phase_breakdown": {
-            model_name: result["models"][model_name]["phase_breakdown"]
-            for model_name in ("global", "phase", "matchgenome_hierarchical")
+            "global": result["models"]["global"]["phase_breakdown"],
+            "phase": result["models"]["phase"]["phase_breakdown"],
+            "matchgenome_hierarchical": result["models"]["matchgenome_hierarchical"]["phase_breakdown"],
+            "calibrated_mixture": result["models_additional"]["calibrated_mixture"]["phase_breakdown"],
+            "time_decayed_mixture": result["models_additional"]["time_decayed_mixture"]["phase_breakdown"],
         },
+        "mixture_tuning": result["mixture_tuning"],
+        "time_decayed_mixture_tuning": result["time_decayed_mixture_tuning"],
+        "improvement_vs_phase": result["improvement_vs_phase"],
+        "improvement_vs_hierarchical": result["improvement_vs_hierarchical"],
+        "time_decayed_vs_existing_mixture": result["time_decayed_vs_existing_mixture"],
         "hierarchical_evidence_breakdown": result["hierarchical_evidence_breakdown"],
     }
 
