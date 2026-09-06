@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MatchGenome Time Machine</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app" aria-live="polite">
+      <header class="app-header">
+        <h1>MatchGenome Time Machine</h1>
+        <p>Travel through IPL history and see what MatchGenome predicted before each ball.</p>
+      </header>
+
+      <section class="selector card" aria-label="Match selection">
+        <h2>Select Replay</h2>
+        <div class="selector-grid">
+          <label>Season
+            <select id="seasonSelect"></select>
+          </label>
+          <label>Match
+            <select id="matchSelect"></select>
+          </label>
+          <label>Innings
+            <select id="inningsSelect"></select>
+          </label>
+        </div>
+        <button id="startReplayBtn" class="primary">Start Time Machine</button>
+      </section>
+
+      <section id="statusBanner" class="status card" hidden></section>
+
+      <section id="replayPanel" class="replay" hidden>
+        <section class="card match-header" aria-label="Match header">
+          <h2 id="matchTitle">Replay</h2>
+          <div class="header-grid">
+            <div><span>Teams</span><strong id="teamsValue">-</strong></div>
+            <div><span>Innings</span><strong id="inningsValue">-</strong></div>
+            <div><span>Score</span><strong id="scoreValue">-</strong></div>
+            <div><span>Over/Ball</span><strong id="overBallValue">-</strong></div>
+          </div>
+        </section>
+
+        <section class="card timeline" aria-label="Replay timeline">
+          <h3>Timeline</h3>
+          <div id="timelineTrack" class="timeline-track"></div>
+        </section>
+
+        <section class="card state" aria-label="Current match state">
+          <h3>Pre-Ball State</h3>
+          <div class="state-grid">
+            <div><span>Batter</span><strong id="batterValue">-</strong></div>
+            <div><span>Non-striker</span><strong id="nonStrikerValue">-</strong></div>
+            <div><span>Bowler</span><strong id="bowlerValue">-</strong></div>
+            <div><span>Phase</span><strong id="phaseValue">-</strong></div>
+            <div><span>Score</span><strong id="stateScoreValue">-</strong></div>
+            <div><span>Wickets</span><strong id="stateWicketsValue">-</strong></div>
+            <div><span>Legal balls</span><strong id="stateBallsValue">-</strong></div>
+            <div><span>Remaining</span><strong id="remainingValue">-</strong></div>
+          </div>
+        </section>
+
+        <section class="card prediction" aria-label="MatchGenome prediction">
+          <h3>What MatchGenome Predicted</h3>
+          <p class="hero"><span id="predictedTop">-</span> <small id="predictedPct">-</small></p>
+          <div id="probabilityBars" class="probability-bars"></div>
+          <div class="evidence" id="evidenceBlock"></div>
+        </section>
+
+        <section class="card controls" aria-label="Replay controls">
+          <h3>Replay Control</h3>
+          <div class="control-row">
+            <button id="predictBtn" class="primary">Predict Next Ball</button>
+            <button id="revealBtn" class="accent" disabled>Reveal Ball</button>
+            <button id="nextBtn" disabled>Next Ball</button>
+            <button id="restartBtn">Restart</button>
+          </div>
+        </section>
+
+        <section class="card actual" aria-label="Actual result">
+          <h3>What Happened</h3>
+          <div id="actualBlock" class="actual-block">Reveal the ball to see actual outcome.</div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
+
