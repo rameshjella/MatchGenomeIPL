@@ -146,14 +146,16 @@
       <section id="playerView" class="view-stack" hidden>
         <section class="card" aria-label="Player search">
           <div class="player-panel-header">
-            <h2>Player Intelligence</h2>
+            <h2>Players</h2>
             <button id="backToReplayBtn" type="button">Return to Time Machine</button>
           </div>
-          <p class="muted">Search any player or jump directly from replay participants.</p>
+          <p class="muted">Search by player name, or click players directly inside Time Machine.</p>
           <div class="search-row">
+            <label class="sr-only" for="playerSearchInput">Search players</label>
             <input id="playerSearchInput" type="search" placeholder="Search players (e.g. Head, Kohli, Bumrah)" />
             <button id="playerSearchBtn" type="button">Search</button>
           </div>
+          <p id="playerSearchHint" class="muted">Type at least 2 characters to see matching players.</p>
           <div id="playerSearchResults" class="search-results" role="listbox" aria-label="Player search results"></div>
         </section>
 
@@ -162,13 +164,16 @@
             <h3>Player Profile</h3>
             <button id="closePlayerBtn" type="button">Close</button>
           </div>
-          <div id="playerPrompt">Click a batter, non-striker, or bowler in Time Machine, or use search above.</div>
+          <div id="playerPrompt">Use search to open a player workspace, or click a batter/non-striker/bowler from Time Machine.</div>
           <div id="playerPanel" hidden>
             <div class="player-hero premium">
+              <img id="playerPhoto" class="avatar avatar-photo" alt="" src="/assets/players/placeholder.svg" hidden />
               <div id="playerAvatar" class="avatar" aria-hidden="true">?</div>
               <div class="player-headline">
                 <h4 id="playerName">-</h4>
                 <p id="playerRole" class="muted">-</p>
+                <p id="playerCareerContext" class="muted">-</p>
+                <p id="playerPhotoMeta" class="muted">-</p>
                 <div class="context-links">
                   <button id="exploreReplayBtn" type="button">Explore in Time Machine</button>
                   <span id="playerContextText" class="muted">No active replay context.</span>
@@ -180,6 +185,8 @@
               <button id="playerTabBattingBtn" class="tab-btn" type="button">Batting</button>
               <button id="playerTabBowlingBtn" class="tab-btn" type="button">Bowling</button>
               <button id="playerTabMatchupsBtn" class="tab-btn" type="button">Matchups</button>
+              <button id="playerTabSeasonsBtn" class="tab-btn" type="button">Seasons</button>
+              <button id="playerTabPhasesBtn" class="tab-btn" type="button">Phases</button>
             </div>
 
             <section id="playerPanelOverview" class="player-tab-panel">
@@ -199,6 +206,16 @@
             <section id="playerPanelMatchups" class="player-tab-panel" hidden>
               <h4>Matchup Intelligence</h4>
               <div id="playerMatchups"></div>
+            </section>
+
+            <section id="playerPanelSeasons" class="player-tab-panel" hidden>
+              <h4>Season Trends</h4>
+              <div id="playerSeasons"></div>
+            </section>
+
+            <section id="playerPanelPhases" class="player-tab-panel" hidden>
+              <h4>Phase Comparison</h4>
+              <div id="playerPhases"></div>
             </section>
           </div>
         </section>

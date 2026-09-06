@@ -85,7 +85,7 @@ MatchGenomeIPL
   -> Time Machine (predict before reveal)
   -> Discover via season + match cards (team-first labels)
   -> Click batter / non-striker / bowler
-  -> Players (Player Intelligence profile with contextual evidence)
+  -> Players workspace (search-first, context-aware intelligence)
   -> Return to Time Machine (same replay context)
 ```
 
@@ -197,9 +197,9 @@ Player metrics are derived from SQLite (no fabricated data), including:
 
 UI organization:
 
-- search-first player discovery,
-- premium player header with local photo/fallback avatar,
-- tabbed sections: `Overview`, `Batting`, `Bowling`, `Matchups`,
+- search-first player discovery (no giant default player list),
+- player identity header (name, role label, context, image provenance),
+- tabbed sections: `Overview`, `Batting`, `Bowling`, `Matchups`, `Seasons`, `Phases`,
 - role-aware visibility (batting/bowling sections shown only when relevant).
 
 Metric definitions:
@@ -215,7 +215,8 @@ Metric definitions:
 - Local map file: `web/player_photos.json`.
 - Mapped assets are served from `web/assets/players/`.
 - Current mapped subset: `TM Head`, `V Kohli`, `RG Sharma`, `JJ Bumrah`, `MS Dhoni`, `RR Pant`.
-- If not mapped: deterministic initials placeholder avatar.
+- Current mapped assets are explicitly treated as local illustrations (not verified photos).
+- If not mapped: deterministic initials fallback avatar.
 - No external photo API dependency is required at runtime.
 
 ## Performance (Measured)

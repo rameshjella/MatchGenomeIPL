@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Player image fallback</title>
+  <desc id="desc">Generic fallback avatar icon used when no player image is available.</desc>
+  <rect width="64" height="64" rx="32" fill="#24365f" />
+  <circle cx="32" cy="24" r="11" fill="#8fa9df" />
+  <path d="M14 52c3-9 9-14 18-14s15 5 18 14" fill="#8fa9df" />
+</svg>
+

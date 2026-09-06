@@ -22,15 +22,26 @@ def _player_photo_map() -> dict[str, dict[str, Any]]:
             for key, value in payload.items():
                 name = str(key)
                 if isinstance(value, str):
-                    mapped[name] = {"kind": "local", "url": value, "source": "local_mapping"}
+                    mapped[name] = {
+                        "kind": "local",
+                        "url": value,
+                        "source": "local_mapping",
+                        "asset_type": "illustration",
+                        "is_verified_photo": False,
+                    }
                 elif isinstance(value, dict):
                     url = str(value.get("url", "")).strip()
                     if url:
+                        asset_type = str(value.get("asset_type", "")).strip() or "illustration"
+                        is_verified_photo = bool(value.get("is_verified_photo", False))
                         mapped[name] = {
                             "kind": "local",
                             "url": url,
                             "source": str(value.get("source", "local_mapping")),
                             "license": value.get("license"),
+                            "asset_type": asset_type,
+                            "is_verified_photo": is_verified_photo,
+                            "attribution": value.get("attribution"),
                         }
             return mapped
     except Exception:
@@ -82,7 +93,13 @@ def _photo_payload(player_name: str) -> dict[str, Any]:
     photo_map = _player_photo_map()
     if player_name in photo_map:
         return photo_map[player_name]
-    return {"kind": "placeholder", "initials": _initials(player_name), "seed": _avatar_seed(player_name)}
+    return {
+        "kind": "placeholder",
+        "initials": _initials(player_name),
+        "seed": _avatar_seed(player_name),
+        "asset_type": "avatar_fallback",
+        "is_verified_photo": False,
+    }
 
 
 def _evidence_tier(sample_size: int) -> str:

@@ -36,8 +36,12 @@ class PlayerIntelligenceTests(unittest.TestCase):
         self.assertGreaterEqual(len(players), 1)
         self.assertIn("photo", players[0])
         self.assertIn(players[0]["photo"]["kind"], {"local", "placeholder"})
+        self.assertIn("asset_type", players[0]["photo"])
+        self.assertIn("is_verified_photo", players[0]["photo"])
         if players[0]["photo"]["kind"] == "placeholder":
             self.assertIn("seed", players[0]["photo"])
+            self.assertEqual(players[0]["photo"]["asset_type"], "avatar_fallback")
+            self.assertFalse(players[0]["photo"]["is_verified_photo"])
 
     def test_list_players_normalized_query(self) -> None:
         players = list_players(self.conn, query="player a", limit=10)
@@ -84,6 +88,8 @@ class PlayerIntelligenceTests(unittest.TestCase):
         self.assertEqual(first["opponent"], "BowlerX")
         self.assertEqual(first["sample_size"], 6)
         self.assertIn(first["evidence_tier"], {"small", "low", "medium", "high"})
+        self.assertIn("batter_vs_bowler_type", profile["matchups"])
+        self.assertIn("bowler_vs_batter_type", profile["matchups"])
 
     def test_outcome_distribution_shape(self) -> None:
         profile = get_player_intelligence(self.conn, "PlayerA")

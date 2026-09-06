@@ -448,8 +448,16 @@ button:disabled {
   overflow-y: auto;
 }
 
+#playerSearchHint {
+  margin: 8px 0 0;
+}
+
 .search-result {
   text-align: left;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
 }
 
 .search-result small {
@@ -489,6 +497,17 @@ button:disabled {
   font-weight: 700;
   background-size: cover;
   background-position: center;
+}
+
+.avatar-photo {
+  object-fit: cover;
+  border: 1px solid var(--line);
+}
+
+#playerCareerContext,
+#playerPhotoMeta {
+  margin: 0;
+  font-size: 0.87rem;
 }
 
 .stats-grid {
@@ -533,6 +552,18 @@ button:disabled {
 .tech-details summary {
   cursor: pointer;
   color: #d4e0ff;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @media (max-width: 960px) {

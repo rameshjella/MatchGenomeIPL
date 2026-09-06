@@ -43,6 +43,7 @@ const state = {
   selectedMatch: null,
   selectedInnings: null,
   selectedTimelineIndex: -1,
+  playerCapabilities: { hasBatting: false, hasBowling: false },
 };
 
 const els = {
@@ -102,28 +103,38 @@ const els = {
   backToReplayBtn: document.getElementById("backToReplayBtn"),
   playerSearchInput: document.getElementById("playerSearchInput"),
   playerSearchBtn: document.getElementById("playerSearchBtn"),
+  playerSearchHint: document.getElementById("playerSearchHint"),
   playerSearchResults: document.getElementById("playerSearchResults"),
   playerPrompt: document.getElementById("playerPrompt"),
   playerPanel: document.getElementById("playerPanel"),
+  playerPhoto: document.getElementById("playerPhoto"),
   playerAvatar: document.getElementById("playerAvatar"),
   playerName: document.getElementById("playerName"),
   playerRole: document.getElementById("playerRole"),
+  playerCareerContext: document.getElementById("playerCareerContext"),
+  playerPhotoMeta: document.getElementById("playerPhotoMeta"),
   playerContextText: document.getElementById("playerContextText"),
   exploreReplayBtn: document.getElementById("exploreReplayBtn"),
   playerTabOverviewBtn: document.getElementById("playerTabOverviewBtn"),
   playerTabBattingBtn: document.getElementById("playerTabBattingBtn"),
   playerTabBowlingBtn: document.getElementById("playerTabBowlingBtn"),
   playerTabMatchupsBtn: document.getElementById("playerTabMatchupsBtn"),
+  playerTabSeasonsBtn: document.getElementById("playerTabSeasonsBtn"),
+  playerTabPhasesBtn: document.getElementById("playerTabPhasesBtn"),
   playerPanelOverview: document.getElementById("playerPanelOverview"),
   playerPanelBatting: document.getElementById("playerPanelBatting"),
   playerPanelBowling: document.getElementById("playerPanelBowling"),
   playerPanelMatchups: document.getElementById("playerPanelMatchups"),
+  playerPanelSeasons: document.getElementById("playerPanelSeasons"),
+  playerPanelPhases: document.getElementById("playerPanelPhases"),
   playerOverview: document.getElementById("playerOverview"),
   battingTitle: document.getElementById("battingTitle"),
   bowlingTitle: document.getElementById("bowlingTitle"),
   playerBatting: document.getElementById("playerBatting"),
   playerBowling: document.getElementById("playerBowling"),
   playerMatchups: document.getElementById("playerMatchups"),
+  playerSeasons: document.getElementById("playerSeasons"),
+  playerPhases: document.getElementById("playerPhases"),
   closePlayerBtn: document.getElementById("closePlayerBtn"),
 };
 
@@ -180,6 +191,17 @@ function capitalize(value) {
   return value ? `${value}`.charAt(0).toUpperCase() + `${value}`.slice(1) : "-";
 }
 
+function metricDisplay(value) {
+  return value === null || value === undefined ? "-" : String(value);
+}
+
+function photoMetaLabel(photo) {
+  if (!photo) return "No image metadata.";
+  if (photo.kind === "placeholder") return "Fallback avatar (no verified player image available).";
+  if (photo.asset_type === "photo" && photo.is_verified_photo) return "Verified local player photo.";
+  return "Local player illustration (not a real photograph).";
+}
+
 function setView(view) {
   state.view = view;
   const playerMode = view === "player";
@@ -205,13 +227,15 @@ function setReplayTab(tab) {
   });
 }
 
-function setPlayerTab(tab, hasBatting, hasBowling) {
+function setPlayerTab(tab, hasBatting, hasBowling, hasSeasonData, hasPhaseData) {
   state.playerTab = tab;
   const map = {
     overview: [els.playerTabOverviewBtn, els.playerPanelOverview],
     batting: [els.playerTabBattingBtn, els.playerPanelBatting],
     bowling: [els.playerTabBowlingBtn, els.playerPanelBowling],
     matchups: [els.playerTabMatchupsBtn, els.playerPanelMatchups],
+    seasons: [els.playerTabSeasonsBtn, els.playerPanelSeasons],
+    phases: [els.playerTabPhasesBtn, els.playerPanelPhases],
   };
   Object.entries(map).forEach(([name, [btn, panel]]) => {
     const active = name === tab;
@@ -221,6 +245,8 @@ function setPlayerTab(tab, hasBatting, hasBowling) {
   });
   els.playerTabBattingBtn.hidden = !hasBatting;
   els.playerTabBowlingBtn.hidden = !hasBowling;
+  els.playerTabSeasonsBtn.hidden = !hasSeasonData;
+  els.playerTabPhasesBtn.hidden = !hasPhaseData;
 }
 
 function setUiState(nextState) {
@@ -536,30 +562,46 @@ async function loadPlayer(name) {
   const header = payload.player;
   const hasBatting = Boolean(payload.sections?.has_batting);
   const hasBowling = Boolean(payload.sections?.has_bowling);
+  const hasSeasonData = hasBatting || hasBowling;
+  const hasPhaseData = hasBatting || hasBowling;
+  state.playerCapabilities = { hasBatting, hasBowling };
   state.activePlayer = name;
 
   els.playerPrompt.hidden = true;
   els.playerPanel.hidden = false;
   els.playerName.textContent = header.name;
-  els.playerRole.textContent = `IPL Intelligence Profile${header.role_label ? ` · ${header.role_label}` : ""}`;
+  const roleText = header.role_label ? ` · ${header.role_label}` : "";
+  els.playerRole.textContent = `IPL Intelligence Profile${roleText}`;
 
-  if (header.photo.kind === "local") {
-    els.playerAvatar.style.backgroundImage = `url('${header.photo.url}')`;
-    els.playerAvatar.textContent = "";
+  if (header.photo.kind === "local" && header.photo.url) {
+    els.playerPhoto.hidden = false;
+    els.playerPhoto.src = header.photo.url;
+    els.playerPhoto.alt = `${header.name} player image`;
+    els.playerAvatar.hidden = true;
   } else {
+    els.playerPhoto.hidden = true;
+    els.playerPhoto.src = "/assets/players/placeholder.svg";
+    els.playerPhoto.alt = "";
+    els.playerAvatar.hidden = false;
     els.playerAvatar.style.backgroundImage = "none";
     els.playerAvatar.style.setProperty("--avatar-seed", String(header.photo.seed || 140));
     els.playerAvatar.textContent = header.photo.initials || "?";
   }
+  els.playerPhotoMeta.textContent = photoMetaLabel(header.photo);
 
   const ov = payload.overview;
+  els.playerCareerContext.textContent = `${metricDisplay(ov.matches)} matches · Batting innings ${metricDisplay(ov.batting_innings)} · Bowling innings ${metricDisplay(ov.bowling_innings)}`;
   els.playerOverview.innerHTML = [
     metricTile("Matches", ov.matches),
     metricTile("Batting runs", ov.batting.runs),
+    metricTile("Batting balls", ov.batting.balls),
     metricTile("Batting SR", ov.batting.strike_rate),
     metricTile("Batting average", ov.batting.average),
+    metricTile("Dismissals", ov.batting.dismissals),
     metricTile("Boundaries", ov.batting.boundaries),
     metricTile("Wickets", ov.bowling.wickets),
+    metricTile("Runs conceded", ov.bowling.runs_conceded),
+    metricTile("Bowling balls", ov.bowling.legal_balls),
     metricTile("Economy", ov.bowling.economy),
     metricTile("Bowling SR", ov.bowling.strike_rate),
   ].join("");
@@ -568,84 +610,134 @@ async function loadPlayer(name) {
   els.bowlingTitle.hidden = !hasBowling;
 
   els.playerBatting.innerHTML = hasBatting
-    ? `<h5>Season trend</h5>${renderTrendRows(payload.batting_intelligence.by_season, "runs", (v) => `${v} runs`)}
-       <h5>By season</h5>${renderTable(payload.batting_intelligence.by_season, [
-         { key: "season_id", label: "Season" },
-         { key: "runs", label: "Runs" },
-         { key: "balls", label: "Balls" },
-         { key: "strike_rate", label: "SR" },
-       ])}
-       <h5>By phase</h5>${renderTable(payload.batting_intelligence.by_phase, [
-         { key: "phase", label: "Phase" },
-         { key: "runs", label: "Runs" },
-         { key: "balls", label: "Balls" },
-         { key: "strike_rate", label: "SR" },
-       ])}
-       <h5>Outcome profile</h5>${renderOutcome(payload.batting_intelligence.outcome_distribution)}`
+    ? `<div class='stats-grid'>
+         ${metricTile("Runs", ov.batting.runs)}
+         ${metricTile("Balls", ov.batting.balls)}
+         ${metricTile("Strike rate", ov.batting.strike_rate)}
+         ${metricTile("Average", ov.batting.average)}
+         ${metricTile("Fours", ov.batting.fours)}
+         ${metricTile("Sixes", ov.batting.sixes)}
+         ${metricTile("Dot ball %", ov.batting.dot_ball_rate)}
+       </div>
+       <h5>Batting outcome profile</h5>${renderOutcome(payload.batting_intelligence.outcome_distribution)}`
     : "";
 
   els.playerBowling.innerHTML = hasBowling
-    ? `<h5>Season trend</h5>${renderTrendRows(payload.bowling_intelligence.by_season, "wickets", (v) => `${v} wkts`)}
-       <h5>By season</h5>${renderTable(payload.bowling_intelligence.by_season, [
-         { key: "season_id", label: "Season" },
-         { key: "runs_conceded", label: "Runs" },
-         { key: "legal_balls", label: "Balls" },
-         { key: "wickets", label: "Wkts" },
-         { key: "economy", label: "Economy" },
-       ])}
-       <h5>By phase</h5>${renderTable(payload.bowling_intelligence.by_phase, [
-         { key: "phase", label: "Phase" },
-         { key: "runs_conceded", label: "Runs" },
-         { key: "legal_balls", label: "Balls" },
-         { key: "wickets", label: "Wkts" },
-         { key: "economy", label: "Economy" },
-       ])}
-       <h5>Outcome profile</h5>${renderOutcome(payload.bowling_intelligence.outcome_distribution)}`
+    ? `<div class='stats-grid'>
+         ${metricTile("Wickets", ov.bowling.wickets)}
+         ${metricTile("Runs conceded", ov.bowling.runs_conceded)}
+         ${metricTile("Legal balls", ov.bowling.legal_balls)}
+         ${metricTile("Economy", ov.bowling.economy)}
+         ${metricTile("Strike rate", ov.bowling.strike_rate)}
+         ${metricTile("Dot ball %", ov.bowling.dot_ball_rate)}
+       </div>
+       <h5>Bowling outcome profile</h5>${renderOutcome(payload.bowling_intelligence.outcome_distribution)}`
     : "";
 
   els.playerMatchups.innerHTML =
-    `<h5>Batter vs Bowler</h5>${renderMatchups(payload.matchups.batter_vs_bowler, [
+    `<p class='muted'>Direct matchups use player-versus-player records. Type matchups broaden to batting/bowling style evidence.</p>` +
+    `<h5>Direct: Batter vs Bowler</h5>${renderMatchups(payload.matchups.batter_vs_bowler, [
       { key: "opponent", label: "Bowler" },
       { key: "sample_size", label: "Balls" },
       { key: "runs", label: "Runs" },
       { key: "wickets", label: "Wkts" },
       { key: "strike_rate", label: "SR" },
     ])}` +
-    `<h5>Bowler vs Batter</h5>${renderMatchups(payload.matchups.bowler_vs_batter, [
+    `<h5>Direct: Bowler vs Batter</h5>${renderMatchups(payload.matchups.bowler_vs_batter, [
       { key: "opponent", label: "Batter" },
+      { key: "sample_size", label: "Balls" },
+      { key: "runs_conceded", label: "Runs" },
+      { key: "wickets", label: "Wkts" },
+      { key: "economy", label: "Economy" },
+    ])}` +
+    `<h5>Type evidence: Batter vs Bowler Type</h5>${renderMatchups(payload.matchups.batter_vs_bowler_type, [
+      { key: "opponent_type", label: "Bowler type" },
+      { key: "sample_size", label: "Balls" },
+      { key: "runs", label: "Runs" },
+      { key: "wickets", label: "Wkts" },
+      { key: "strike_rate", label: "SR" },
+    ])}` +
+    `<h5>Type evidence: Bowler vs Batter Type</h5>${renderMatchups(payload.matchups.bowler_vs_batter_type, [
+      { key: "opponent_type", label: "Batter type" },
       { key: "sample_size", label: "Balls" },
       { key: "runs_conceded", label: "Runs" },
       { key: "wickets", label: "Wkts" },
       { key: "economy", label: "Economy" },
     ])}`;
 
+  els.playerSeasons.innerHTML =
+    `<h5>Batting trend by season</h5>${renderTrendRows(payload.batting_intelligence.by_season, "runs", (v) => `${v} runs`)}` +
+    `${renderTable(payload.batting_intelligence.by_season, [
+      { key: "season_id", label: "Season" },
+      { key: "runs", label: "Runs" },
+      { key: "balls", label: "Balls" },
+      { key: "strike_rate", label: "SR" },
+      { key: "dot_ball_rate", label: "Dot %" },
+    ])}` +
+    `<h5>Bowling trend by season</h5>${renderTrendRows(payload.bowling_intelligence.by_season, "wickets", (v) => `${v} wkts`)}` +
+    `${renderTable(payload.bowling_intelligence.by_season, [
+      { key: "season_id", label: "Season" },
+      { key: "wickets", label: "Wkts" },
+      { key: "runs_conceded", label: "Runs" },
+      { key: "economy", label: "Economy" },
+      { key: "strike_rate", label: "SR" },
+    ])}`;
+
+  els.playerPhases.innerHTML =
+    `<h5>Batting by phase</h5>${renderTable(payload.batting_intelligence.by_phase, [
+      { key: "phase", label: "Phase" },
+      { key: "runs", label: "Runs" },
+      { key: "balls", label: "Balls" },
+      { key: "strike_rate", label: "SR" },
+      { key: "dot_ball_rate", label: "Dot %" },
+    ])}` +
+    `<h5>Bowling by phase</h5>${renderTable(payload.bowling_intelligence.by_phase, [
+      { key: "phase", label: "Phase" },
+      { key: "wickets", label: "Wkts" },
+      { key: "runs_conceded", label: "Runs" },
+      { key: "economy", label: "Economy" },
+      { key: "dot_ball_rate", label: "Dot %" },
+    ])}`;
+
   const replay = payload.entry_points?.return_to_replay;
   if (replay) {
     const teams = state.selectedMatch ? matchTitleFromMeta(state.selectedMatch) : `Match ID ${replay.match_id}`;
     els.playerContextText.textContent = `From replay: ${teams} · ${replay.season_id} · Innings ${replay.innings}`;
+    els.backToReplayBtn.textContent = `Return to Replay`;
+    els.exploreReplayBtn.textContent = `Back to ${teams}`;
   } else {
     els.playerContextText.textContent = state.sessionMeta
       ? `Current replay: ${state.selectedMatch ? matchTitleFromMeta(state.selectedMatch) : `Match ID ${state.sessionMeta.match_id}`} · Innings ${state.sessionMeta.innings}`
       : "No active replay context.";
+    els.backToReplayBtn.textContent = "Return to Time Machine";
+    els.exploreReplayBtn.textContent = "Explore in Time Machine";
   }
 
-  setPlayerTab(hasBatting ? "batting" : hasBowling ? "bowling" : "overview", hasBatting, hasBowling);
+  setPlayerTab("overview", hasBatting, hasBowling, hasSeasonData, hasPhaseData);
   clearStatus();
 }
 
 async function searchPlayers() {
   const q = (els.playerSearchInput.value || "").trim();
+  if (q.length < 2) {
+    els.playerSearchResults.innerHTML = "";
+    els.playerSearchHint.textContent = "Type at least 2 characters to see matching players.";
+    return;
+  }
+  els.playerSearchHint.textContent = "Searching players...";
   const data = await api.get(`/api/players?query=${encodeURIComponent(q)}&limit=20`);
   els.playerSearchResults.innerHTML = "";
   if (!data.players || data.players.length === 0) {
-    els.playerSearchResults.innerHTML = "<p class='muted'>Search for a player to begin.</p>";
+    els.playerSearchHint.textContent = "No players matched. Try a different spelling.";
     return;
   }
+  els.playerSearchHint.textContent = `${data.players.length} player${data.players.length === 1 ? "" : "s"} matched.`;
   data.players.forEach((item) => {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "search-result";
-    row.innerHTML = `<span>${item.player_name}</span><small>${item.photo.kind === "local" ? "photo" : "avatar"}</small>`;
+    const badge = item.photo.asset_type === "photo" && item.photo.is_verified_photo ? "photo" : item.photo.kind === "local" ? "illustration" : "avatar";
+    row.innerHTML = `<span>${item.player_name}</span><small>${badge}</small>`;
     row.onclick = () => setRoute({ view: "player", player: item.player_name });
     els.playerSearchResults.appendChild(row);
   });
@@ -826,10 +918,17 @@ function attachEvents() {
   els.exploreReplayBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
   els.closePlayerBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
 
-  els.playerTabOverviewBtn.addEventListener("click", () => setPlayerTab("overview", true, true));
-  els.playerTabBattingBtn.addEventListener("click", () => setPlayerTab("batting", true, true));
-  els.playerTabBowlingBtn.addEventListener("click", () => setPlayerTab("bowling", true, true));
-  els.playerTabMatchupsBtn.addEventListener("click", () => setPlayerTab("matchups", true, true));
+  const applyPlayerTab = (tab) => {
+    const hasBatting = Boolean(state.playerCapabilities?.hasBatting);
+    const hasBowling = Boolean(state.playerCapabilities?.hasBowling);
+    setPlayerTab(tab, hasBatting, hasBowling, hasBatting || hasBowling, hasBatting || hasBowling);
+  };
+  els.playerTabOverviewBtn.addEventListener("click", () => applyPlayerTab("overview"));
+  els.playerTabBattingBtn.addEventListener("click", () => applyPlayerTab("batting"));
+  els.playerTabBowlingBtn.addEventListener("click", () => applyPlayerTab("bowling"));
+  els.playerTabMatchupsBtn.addEventListener("click", () => applyPlayerTab("matchups"));
+  els.playerTabSeasonsBtn.addEventListener("click", () => applyPlayerTab("seasons"));
+  els.playerTabPhasesBtn.addEventListener("click", () => applyPlayerTab("phases"));
 
   els.playerSearchBtn.addEventListener("click", () => searchPlayers().catch((err) => setStatus(err.message || "Player search failed.", "error")));
   els.playerSearchInput.addEventListener("keydown", (event) => {
@@ -845,7 +944,6 @@ async function bootstrap() {
     await loadSeasons();
     await loadMatches();
     await loadInnings();
-    await searchPlayers();
     attachEvents();
     setReplayTab("prediction");
     setUiState(UiState.SELECT_MATCH);

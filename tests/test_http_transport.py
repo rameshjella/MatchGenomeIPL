@@ -92,11 +92,14 @@ class HttpTransportTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertGreaterEqual(len(players["players"]), 1)
         name = quote(players["players"][0]["player_name"])
+        self.assertIn("asset_type", players["players"][0]["photo"])
+        self.assertIn("is_verified_photo", players["players"][0]["photo"])
 
         status, profile = self._get(f"/api/players/{name}")
         self.assertEqual(status, 200)
         self.assertIn("overview", profile)
         self.assertIn("player", profile)
+        self.assertIn("asset_type", profile["player"]["photo"])
 
     def test_player_search_partial_name(self) -> None:
         status, players = self._get("/api/players?query=yerA&limit=10")
