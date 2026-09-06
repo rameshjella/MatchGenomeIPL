@@ -89,8 +89,19 @@ class PredictionContext:
 
 
 class SequentialPredictionSession:
-    def __init__(self, conn: sqlite3.Connection, season_id: int, match_id: int, innings: int) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        season_id: int,
+        match_id: int,
+        innings: int,
+        start_over_number: int | None = None,
+        start_ball_number: int | None = None,
+    ) -> None:
         self.conn = conn
+        self.season_id = season_id
+        self.match_id = match_id
+        self.innings = innings
         self.rows = conn.execute(
             """
             SELECT
@@ -100,13 +111,47 @@ class SequentialPredictionSession:
                 over_number,
                 ball_number,
                 source_row_number,
+                team_batting,
+                team_bowling,
                 batter,
+                non_striker,
                 bowler,
                 batsman_type,
                 bowler_type,
+                batter_runs,
+                extras,
                 total_runs,
                 is_wicket,
+                is_wide_ball,
+                is_no_ball,
+                is_leg_bye,
+                is_bye,
+                is_penalty,
+                wide_ball_runs,
+                no_ball_runs,
+                leg_bye_runs,
+                bye_runs,
+                penalty_runs,
+                wicket_kind,
+                legal_ball,
+                is_super_over,
                 timeline_key,
+                COALESCE(
+                    SUM(total_runs) OVER (
+                        PARTITION BY season_id, match_id, innings
+                        ORDER BY over_number, ball_number, source_row_number
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    ),
+                    0
+                ) AS score_before,
+                COALESCE(
+                    SUM(is_wicket) OVER (
+                        PARTITION BY season_id, match_id, innings
+                        ORDER BY over_number, ball_number, source_row_number
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    ),
+                    0
+                ) AS wickets_before,
                 COALESCE(
                     SUM(legal_ball) OVER (
                         PARTITION BY season_id, match_id, innings
@@ -125,8 +170,77 @@ class SequentialPredictionSession:
             raise ValueError("No deliveries found for replay session")
 
         self.index = 0
+        if start_over_number is not None and start_ball_number is not None:
+            found = False
+            for idx, row in enumerate(self.rows):
+                if int(row["over_number"]) == start_over_number and int(row["ball_number"]) == start_ball_number:
+                    self.index = idx
+                    found = True
+                    break
+            if not found:
+                raise ValueError("Starting delivery not found in innings")
+
         self.global_counts: Counter[str] | None = None
         self.context_count_map: dict[tuple[str, tuple[Any, ...]], Counter[str]] | None = None
+
+    def total_deliveries(self) -> int:
+        return len(self.rows)
+
+    def current_delivery_index(self) -> int:
+        return self.index
+
+    def remaining_deliveries(self) -> int:
+        return max(0, self.total_deliveries() - self.index)
+
+    def current_row(self) -> sqlite3.Row | None:
+        if not self.has_next():
+            return None
+        return self.rows[self.index]
+
+    def current_state(self) -> dict[str, Any]:
+        row = self.current_row()
+        if row is None:
+            if self.rows:
+                last = self.rows[-1]
+                final_score = int(last["score_before"]) + int(last["total_runs"])
+                final_wickets = int(last["wickets_before"]) + int(last["is_wicket"])
+                final_legal = int(last["legal_balls_before"]) + int(last["legal_ball"])
+            else:
+                final_score = 0
+                final_wickets = 0
+                final_legal = 0
+            return {
+                "season_id": self.season_id,
+                "match_id": self.match_id,
+                "innings": self.innings,
+                "score_before_delivery": final_score,
+                "wickets_before_delivery": final_wickets,
+                "legal_balls_before_delivery": final_legal,
+                "innings_phase": innings_phase(final_legal),
+                "next_delivery": None,
+                "remaining_deliveries": 0,
+            }
+
+        legal_balls_before = int(row["legal_balls_before"])
+        return {
+            "season_id": int(row["season_id"]),
+            "match_id": int(row["match_id"]),
+            "innings": int(row["innings"]),
+            "team_batting": row["team_batting"],
+            "team_bowling": row["team_bowling"],
+            "score_before_delivery": int(row["score_before"]),
+            "wickets_before_delivery": int(row["wickets_before"]),
+            "legal_balls_before_delivery": legal_balls_before,
+            "innings_phase": innings_phase(legal_balls_before),
+            "next_delivery": {
+                "over_number": int(row["over_number"]),
+                "ball_number": int(row["ball_number"]),
+                "batter": row["batter"],
+                "non_striker": row["non_striker"],
+                "bowler": row["bowler"],
+            },
+            "remaining_deliveries": self.remaining_deliveries(),
+        }
 
     def _initialize_history_for_current(self) -> None:
         row = self.rows[self.index]
@@ -205,6 +319,19 @@ class SequentialPredictionSession:
                 "legal_balls_before": int(row["legal_balls_before"]),
                 "innings_phase": phase,
             },
+            "observed_state": {
+                "team_batting": row["team_batting"],
+                "team_bowling": row["team_bowling"],
+                "over_number": int(row["over_number"]),
+                "ball_number": int(row["ball_number"]),
+                "striker": row["batter"],
+                "non_striker": row["non_striker"],
+                "bowler": row["bowler"],
+                "score_before_delivery": int(row["score_before"]),
+                "wickets_before_delivery": int(row["wickets_before"]),
+                "legal_balls_before_delivery": int(row["legal_balls_before"]),
+                "innings_phase": phase,
+            },
             "prediction_timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "model_version": baseline["model_version"],
             "chosen_evidence_level": baseline["chosen_evidence_level"],
@@ -214,6 +341,47 @@ class SequentialPredictionSession:
             "predicted_top_outcome": top,
             "actual_outcome": actual,
             "top_prediction_correct": top == actual,
+        }
+
+    def reveal_current_delivery(self) -> dict[str, Any]:
+        row = self.current_row()
+        if row is None:
+            raise StopIteration("No remaining deliveries in replay session")
+        outcome = classify_delivery_outcome(row)
+        return {
+            "target_identity": {
+                "season_id": int(row["season_id"]),
+                "match_id": int(row["match_id"]),
+                "innings": int(row["innings"]),
+                "over_number": int(row["over_number"]),
+                "ball_number": int(row["ball_number"]),
+                "source_row_number": int(row["source_row_number"]),
+            },
+            "participants": {
+                "batter": row["batter"],
+                "non_striker": row["non_striker"],
+                "bowler": row["bowler"],
+            },
+            "delivery_facts": {
+                "batter_runs": int(row["batter_runs"]),
+                "extras": int(row["extras"]),
+                "total_runs": int(row["total_runs"]),
+                "is_wicket": int(row["is_wicket"]),
+                "wicket_kind": row["wicket_kind"],
+                "legal_ball": int(row["legal_ball"]),
+                "is_wide_ball": int(row["is_wide_ball"]),
+                "is_no_ball": int(row["is_no_ball"]),
+                "is_leg_bye": int(row["is_leg_bye"]),
+                "is_bye": int(row["is_bye"]),
+                "is_penalty": int(row["is_penalty"]),
+                "wide_ball_runs": int(row["wide_ball_runs"]),
+                "no_ball_runs": int(row["no_ball_runs"]),
+                "leg_bye_runs": int(row["leg_bye_runs"]),
+                "bye_runs": int(row["bye_runs"]),
+                "penalty_runs": int(row["penalty_runs"]),
+                "is_super_over": int(row["is_super_over"]),
+            },
+            "actual_outcome": outcome,
         }
 
     def advance_with_actual(self) -> None:
@@ -226,12 +394,13 @@ class SequentialPredictionSession:
         outcome = classify_delivery_outcome(row)
         assert self.global_counts is not None
         assert self.context_count_map is not None
+        context_map = self.context_count_map
         self.global_counts[outcome] += 1
         for level_name, _, fields in HIERARCHICAL_CONTEXTS:
             key = tuple(row[field] for field in fields)
             scoped_key = (level_name, key)
-            self.context_count_map.setdefault(scoped_key, Counter())
-            self.context_count_map[scoped_key][outcome] += 1
+            context_map.setdefault(scoped_key, Counter())
+            context_map[scoped_key][outcome] += 1
 
         self.index += 1
 
@@ -239,7 +408,7 @@ class SequentialPredictionSession:
             next_row = self.rows[self.index]
             for level_name, _, fields in HIERARCHICAL_CONTEXTS:
                 next_key = tuple(next_row[field] for field in fields)
-                self.context_count_map.setdefault((level_name, next_key), Counter())
+                context_map.setdefault((level_name, next_key), Counter())
 
     def predict_and_advance(self) -> dict[str, Any]:
         payload = self.predict_next()

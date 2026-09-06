@@ -26,10 +26,14 @@ This repository contains a DB-first IPL analytics and prediction backend using t
 - `src/matchgenomeipl/prediction.py` - baseline next-ball probability model.
 - `src/matchgenomeipl/chronology.py` - chronology abstraction and diagnostics.
 - `src/matchgenomeipl/evaluation.py` - temporal backtesting and model comparison metrics.
+- `src/matchgenomeipl/time_machine.py` - in-memory replay session lifecycle and deterministic predict/reveal contract.
+- `src/matchgenomeipl/time_machine_api.py` - framework-free API facade for Time Machine capabilities.
 - `scripts/run_vertical_slice.py` - real-data execution and proof report.
 - `scripts/run_temporal_evaluation.py` - temporal experiments (e.g. 2024 -> 2025) across baselines.
 - `scripts/prediction_runtime.py` - single-prediction and sequential replay runtime benchmark.
 - `scripts/evaluation_runtime.py` - focused runtime benchmark for temporal evaluation splits.
+- `scripts/run_time_machine_vertical_slice.py` - end-to-end replay flow proof (select, predict, reveal, update).
+- `scripts/time_machine_runtime.py` - replay initialization/predict/reveal runtime benchmark.
 - `tests/` - fast tests using local fixtures.
 
 ## Quick start
@@ -40,6 +44,8 @@ python scripts/run_vertical_slice.py
 python scripts/run_temporal_evaluation.py
 python scripts/prediction_runtime.py
 python scripts/evaluation_runtime.py
+python scripts/run_time_machine_vertical_slice.py
+python scripts/time_machine_runtime.py
 ```
 
 The vertical slice script prints JSON with ingestion/runtime status, analytics examples, one reconstructed pre-delivery state, and one baseline prediction result.
