@@ -44,6 +44,7 @@ body {
   justify-content: space-between;
   gap: 14px;
   align-items: flex-start;
+  flex-wrap: wrap;
 }
 
 .brand h1 {
@@ -66,6 +67,21 @@ body {
 }
 
 .intro {
+  display: grid;
+  gap: 8px;
+}
+
+.launch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.launch-card {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
   display: grid;
   gap: 8px;
 }
@@ -98,6 +114,10 @@ h5 {
 
 h2 {
   font-size: 1.25rem;
+}
+
+h3 {
+  font-size: 1.15rem;
 }
 
 label {
@@ -188,6 +208,10 @@ button:disabled {
   padding: 10px;
   display: grid;
   gap: 4px;
+}
+
+.match-card .match-meta + .match-meta {
+  margin-top: -2px;
 }
 
 .match-card.active {
@@ -417,6 +441,12 @@ button:disabled {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.86rem;
+  table-layout: fixed;
+}
+
+.mini-table th,
+.mini-table td {
+  overflow-wrap: anywhere;
 }
 
 .mini-table th,

@@ -11,6 +11,7 @@ from typing import Any, Callable, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .runtime_logging import log_event, log_http
+from .database import initialize_schema
 from .time_machine import TimeMachineService
 from .time_machine_api import TimeMachineAPI
 
@@ -244,6 +245,7 @@ def create_http_server(
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    initialize_schema(conn)
     resolved_static = static_dir or (Path(__file__).resolve().parents[2] / "web")
     log_event("SERVER", "Creating HTTP server", host=host, port=port, db_path=db_path, static_dir=resolved_static)
     app = TimeMachineHttpApp(conn=conn, static_dir=resolved_static)

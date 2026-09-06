@@ -36,7 +36,7 @@ const state = {
   sessionMeta: null,
   lastPrediction: null,
   timeline: [],
-  view: "time_machine",
+  view: "home",
   activePlayer: null,
   replayTab: "prediction",
   playerTab: "overview",
@@ -48,6 +48,9 @@ const state = {
 };
 
 const els = {
+  homeView: document.getElementById("homeView"),
+  methodologyView: document.getElementById("methodologyView"),
+  goHomeBtn: document.getElementById("goHomeBtn"),
   seasonSelect: document.getElementById("seasonSelect"),
   inningsSelect: document.getElementById("inningsSelect"),
   matchSearchInput: document.getElementById("matchSearchInput"),
@@ -64,6 +67,8 @@ const els = {
   playerView: document.getElementById("playerView"),
   goTimeMachineBtn: document.getElementById("goTimeMachineBtn"),
   goPlayerIntelligenceBtn: document.getElementById("goPlayerIntelligenceBtn"),
+  goMethodologyBtn: document.getElementById("goMethodologyBtn"),
+  openFeaturedReplayBtn: document.getElementById("openFeaturedReplayBtn"),
   replayPanel: document.getElementById("replayPanel"),
   tabPredictionBtn: document.getElementById("tabPredictionBtn"),
   tabBallByBallBtn: document.getElementById("tabBallByBallBtn"),
@@ -148,7 +153,7 @@ const els = {
 function parseRoute() {
   const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   return {
-    view: params.get("view") || "time_machine",
+    view: params.get("view") || "home",
     player: params.get("player") || "",
   };
 }
@@ -186,7 +191,7 @@ function hasUnresolvedTeamName(teamName) {
 }
 
 function applyTeamDataNotice() {
-  const msg = "Source dataset stores team identifiers (not canonical franchise names) for many matches. Team IDs are shown explicitly to avoid fabricating labels.";
+  const msg = "Some matches still include unresolved team IDs. MatchGenome shows the original code only when verified enrichment is unavailable.";
   els.teamDataNotice.hidden = !state.hasTeamIdOnlyData;
   els.replayTeamNotice.hidden = !state.hasTeamIdOnlyData;
   if (state.hasTeamIdOnlyData) {
@@ -231,14 +236,26 @@ function photoMetaLabel(photo) {
 
 function setView(view) {
   state.view = view;
-  const playerMode = view === "player";
-  els.timeMachineView.hidden = playerMode;
-  els.productIntro.hidden = playerMode;
-  els.playerView.hidden = !playerMode;
-  els.goTimeMachineBtn.classList.toggle("primary", !playerMode);
-  els.goPlayerIntelligenceBtn.classList.toggle("primary", playerMode);
-  els.goTimeMachineBtn.setAttribute("aria-current", playerMode ? "false" : "page");
-  els.goPlayerIntelligenceBtn.setAttribute("aria-current", playerMode ? "page" : "false");
+  const isHome = view === "home";
+  const isTimeMachine = view === "time_machine";
+  const isPlayer = view === "player";
+  const isMethodology = view === "methodology";
+
+  els.homeView.hidden = !isHome;
+  els.timeMachineView.hidden = !isTimeMachine;
+  els.playerView.hidden = !isPlayer;
+  els.methodologyView.hidden = !isMethodology;
+
+  const nav = [
+    [els.goHomeBtn, isHome],
+    [els.goTimeMachineBtn, isTimeMachine],
+    [els.goPlayerIntelligenceBtn, isPlayer],
+    [els.goMethodologyBtn, isMethodology],
+  ];
+  nav.forEach(([btn, active]) => {
+    btn.classList.toggle("primary", active);
+    btn.setAttribute("aria-current", active ? "page" : "false");
+  });
 }
 
 function setReplayTab(tab) {
@@ -358,7 +375,8 @@ function renderMatchCards() {
         <span>vs</span>
         <strong>${teamB}</strong>
       </div>
-      <div class='match-meta'>${m.season_id} · Match ${m.season_match_number}${m.is_super_over_match ? " · Super Over" : ""}</div>
+      <div class='match-meta'>IPL ${m.season_id}${m.match_date ? ` · ${m.match_date}` : ""} · Match ${m.match_number || m.season_match_number}${m.is_super_over_match ? " · Super Over" : ""}</div>
+      <div class='match-meta'>${m.venue || "Venue unavailable"}${m.city ? `, ${m.city}` : ""}</div>
       <div class='match-id'>Match ID ${m.match_id} · ${m.innings_count} innings · ${m.deliveries} deliveries</div>
       <div class='match-open'>Open Match</div>
       ${unresolved ? "<div class='match-note'>Team names unavailable in source schema (ID-based).</div>" : ""}
@@ -366,7 +384,7 @@ function renderMatchCards() {
     card.onclick = async () => {
       state.selectedMatchId = Number(m.match_id);
       state.selectedMatch = m;
-      els.selectedMatchMeta.textContent = `${matchTitleFromMeta(m)} · ${m.season_id} · Match ${m.season_match_number} · Match ID ${m.match_id}`;
+      els.selectedMatchMeta.textContent = `${matchTitleFromMeta(m)} · IPL ${m.season_id} · Match ${m.match_number || m.season_match_number} · Match ID ${m.match_id}`;
       renderMatchCards();
       await loadInnings();
     };
@@ -855,7 +873,7 @@ async function loadMatches() {
   renderMatchCards();
   if (state.selectedMatchId !== null) {
     const first = data.matches[0];
-    els.selectedMatchMeta.textContent = `${matchTitleFromMeta(first)} · ${first.season_id} · Match ${first.season_match_number} · Match ID ${first.match_id}`;
+    els.selectedMatchMeta.textContent = `${matchTitleFromMeta(first)} · IPL ${first.season_id} · Match ${first.match_number || first.season_match_number} · Match ID ${first.match_id}`;
   }
   clearStatus();
 }
@@ -897,7 +915,7 @@ async function startReplay() {
   els.replayPanel.hidden = false;
   if (state.selectedMatch) {
     els.matchTitle.textContent = matchTitleFromMeta(state.selectedMatch);
-    els.matchSubline.textContent = `${state.selectedMatch.season_id} · Match ${state.selectedMatch.season_match_number} · Match ID ${state.selectedMatch.match_id}`;
+    els.matchSubline.textContent = `IPL ${state.selectedMatch.season_id} · Match ${state.selectedMatch.match_number || state.selectedMatch.season_match_number} · Match ID ${state.selectedMatch.match_id}`;
   }
   els.teamsValue.textContent = state.selectedMatch ? matchTitleFromMeta(state.selectedMatch) : "-";
   els.inningsValue.textContent = state.selectedInnings ? String(state.selectedInnings.innings) : "-";
@@ -975,6 +993,14 @@ async function restartReplay() {
 
 function syncRoute() {
   const route = parseRoute();
+  if (route.view === "home") {
+    setView("home");
+    return;
+  }
+  if (route.view === "methodology") {
+    setView("methodology");
+    return;
+  }
   if (route.view === "player") {
     setView("player");
     if (!route.player) {
@@ -995,6 +1021,12 @@ function attachEvents() {
     els.seasonSelect.focus();
   });
   els.goPlayersIntroBtn.addEventListener("click", () => setRoute({ view: "player", player: state.activePlayer || "" }));
+  els.openFeaturedReplayBtn.addEventListener("click", () => {
+    setRoute({ view: "time_machine" });
+    if (state.matches.length > 0 && state.selectedMatchId === null) {
+      state.selectedMatchId = Number(state.matches[0].match_id);
+    }
+  });
 
   els.seasonSelect.addEventListener("change", async () => {
     try {
@@ -1027,8 +1059,10 @@ function attachEvents() {
   els.tabBallByBallBtn.addEventListener("click", () => setReplayTab("ball_by_ball"));
   els.tabEvidenceBtn.addEventListener("click", () => setReplayTab("evidence"));
 
+  els.goHomeBtn.addEventListener("click", () => setRoute({ view: "home" }));
   els.goTimeMachineBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
   els.goPlayerIntelligenceBtn.addEventListener("click", () => setRoute({ view: "player", player: state.activePlayer || "" }));
+  els.goMethodologyBtn.addEventListener("click", () => setRoute({ view: "methodology" }));
   els.backToReplayBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
   els.exploreReplayBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
   els.closePlayerBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
@@ -1062,7 +1096,7 @@ async function bootstrap() {
     attachEvents();
     setReplayTab("prediction");
     setUiState(UiState.SELECT_MATCH);
-    setStatus("Explore a season and match, then start a replay to see prediction before reality.");
+    setStatus("Open Time Machine to predict before reveal, then compare with the actual historical ball.");
     syncRoute();
   } catch (err) {
     setStatus(err.message || "Unable to initialize app.", "error");

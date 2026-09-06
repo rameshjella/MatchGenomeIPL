@@ -82,11 +82,13 @@ flowchart TD
 
 ```text
 MatchGenomeIPL
+  -> Home (launch narrative + entry points)
   -> Time Machine (predict before reveal)
-  -> Discover via season + match cards (team-first labels)
+  -> Discover via season + match cards (human-readable identities)
   -> Click batter / non-striker / bowler
   -> Players workspace (search-first, context-aware intelligence)
   -> Return to Time Machine (same replay context)
+  -> Methodology (plain-language model + data contract)
 ```
 
 ## Time Machine Workspace
@@ -100,11 +102,20 @@ The Time Machine UI is organized as a focused workspace:
 
 Technical evidence is available through progressive disclosure in the `Evidence` tab.
 
-## Known Data Limits
+## Enrichment Layer
 
-- The current ball-by-ball source stores many teams as numeric identifiers rather than canonical franchise labels.
-- Match discovery and replay therefore render these as explicit team IDs (for example, `Team 129`) to avoid inventing unsupported names.
-- Player image handling remains explicit: local illustration, verified photo (if available), or fallback avatar.
+Delivery truth remains the original IPL CSV in SQLite. Identity metadata is enriched separately and persisted for offline runtime.
+
+- Source: Cricsheet IPL JSON archive (`https://cricsheet.org/downloads/ipl_json.zip`).
+- Persisted tables: `enrichment_source`, `enrichment_run`, `team_identity`, `team_alias`, `match_metadata`, `match_team_map`, `player_asset`.
+- Runtime behavior: if enrichment exists, app runs fully offline; enrichment refresh is explicit.
+- Fallback behavior: unresolved mappings continue to display raw internal IDs.
+
+Run enrichment manually:
+
+```powershell
+python scripts/run_enrichment.py
+```
 
 ## Runtime Flow (Startup)
 

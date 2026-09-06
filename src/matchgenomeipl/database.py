@@ -130,6 +130,112 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
             player_name TEXT NOT NULL UNIQUE
         );
 
+        CREATE TABLE IF NOT EXISTS enrichment_source (
+            source_key TEXT PRIMARY KEY,
+            source_name TEXT NOT NULL,
+            source_url TEXT,
+            source_type TEXT NOT NULL,
+            source_version TEXT,
+            status TEXT NOT NULL DEFAULT 'unknown',
+            last_checked_at TEXT,
+            last_successful_run_id TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS enrichment_run (
+            run_id TEXT PRIMARY KEY,
+            source_key TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            status TEXT NOT NULL,
+            stats_json TEXT,
+            error_message TEXT,
+            FOREIGN KEY (source_key) REFERENCES enrichment_source(source_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS team_identity (
+            team_identity_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            historical_display_name TEXT NOT NULL UNIQUE,
+            current_canonical_name TEXT,
+            short_name TEXT,
+            source_key TEXT NOT NULL,
+            source_reference TEXT,
+            fetched_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            enrichment_version TEXT NOT NULL,
+            FOREIGN KEY (source_key) REFERENCES enrichment_source(source_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS team_alias (
+            alias_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_identity_id INTEGER NOT NULL,
+            alias_name TEXT NOT NULL,
+            from_season INTEGER,
+            to_season INTEGER,
+            source_key TEXT NOT NULL,
+            source_reference TEXT,
+            fetched_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            enrichment_version TEXT NOT NULL,
+            UNIQUE(team_identity_id, alias_name, from_season, to_season),
+            FOREIGN KEY (team_identity_id) REFERENCES team_identity(team_identity_id),
+            FOREIGN KEY (source_key) REFERENCES enrichment_source(source_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS match_metadata (
+            match_id INTEGER PRIMARY KEY,
+            season_id INTEGER NOT NULL,
+            match_number INTEGER,
+            match_date TEXT,
+            venue TEXT,
+            city TEXT,
+            toss_winner TEXT,
+            toss_decision TEXT,
+            winner TEXT,
+            result_type TEXT,
+            result_margin INTEGER,
+            match_type TEXT,
+            player_of_match TEXT,
+            team_a_display TEXT,
+            team_b_display TEXT,
+            source_key TEXT NOT NULL,
+            source_reference TEXT,
+            fetched_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            enrichment_version TEXT NOT NULL,
+            FOREIGN KEY (source_key) REFERENCES enrichment_source(source_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS match_team_map (
+            match_id INTEGER NOT NULL,
+            internal_team_code TEXT NOT NULL,
+            team_identity_id INTEGER,
+            historical_display_name TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            source_reference TEXT,
+            fetched_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            enrichment_version TEXT NOT NULL,
+            PRIMARY KEY (match_id, internal_team_code),
+            FOREIGN KEY (team_identity_id) REFERENCES team_identity(team_identity_id),
+            FOREIGN KEY (source_key) REFERENCES enrichment_source(source_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS player_asset (
+            player_name TEXT PRIMARY KEY,
+            local_asset_path TEXT,
+            source_key TEXT NOT NULL,
+            source_reference TEXT,
+            source_url TEXT,
+            asset_type TEXT NOT NULL,
+            is_verified_photo INTEGER NOT NULL DEFAULT 0,
+            license TEXT,
+            attribution TEXT,
+            fetched_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            enrichment_version TEXT NOT NULL,
+            FOREIGN KEY (source_key) REFERENCES enrichment_source(source_key)
+        );
+
         CREATE TABLE IF NOT EXISTS matches (
             match_id INTEGER PRIMARY KEY,
             season_id INTEGER NOT NULL,
@@ -315,6 +421,15 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_ingestion_runs_status
             ON ingestion_runs(status, started_at);
+
+        CREATE INDEX IF NOT EXISTS idx_match_metadata_season
+            ON match_metadata(season_id, match_id);
+
+        CREATE INDEX IF NOT EXISTS idx_match_team_map_lookup
+            ON match_team_map(match_id, internal_team_code);
+
+        CREATE INDEX IF NOT EXISTS idx_player_asset_type
+            ON player_asset(asset_type, is_verified_photo);
         """
     )
 

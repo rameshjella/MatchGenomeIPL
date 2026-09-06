@@ -89,7 +89,38 @@ def _avatar_seed(name: str) -> int:
     return sum(ord(ch) for ch in name) % 360
 
 
-def _photo_payload(player_name: str) -> dict[str, Any]:
+def _photo_payload(conn: sqlite3.Connection, player_name: str) -> dict[str, Any]:
+    row = conn.execute(
+        """
+        SELECT
+            local_asset_path,
+            source_reference,
+            source_url,
+            asset_type,
+            is_verified_photo,
+            license,
+            attribution,
+            verification_status
+        FROM player_asset
+        WHERE player_name = ?
+        """,
+        (player_name,),
+    ).fetchone()
+    if row is not None:
+        local_asset = str(row["local_asset_path"] or "").strip()
+        if local_asset:
+            return {
+                "kind": "local",
+                "url": local_asset,
+                "source": str(row["source_reference"] or "player_asset"),
+                "source_url": row["source_url"],
+                "license": row["license"],
+                "asset_type": str(row["asset_type"] or "illustration"),
+                "is_verified_photo": bool(row["is_verified_photo"]),
+                "attribution": row["attribution"],
+                "verification_status": row["verification_status"],
+            }
+
     photo_map = _player_photo_map()
     if player_name in photo_map:
         return photo_map[player_name]
@@ -133,7 +164,7 @@ def list_players(conn: sqlite3.Connection, query: str = "", limit: int = 50) -> 
     payload: list[dict[str, Any]] = []
     for row in rows:
         name = str(row["player_name"])
-        payload.append({"player_name": name, "photo": _photo_payload(name)})
+        payload.append({"player_name": name, "photo": _photo_payload(conn, name)})
     return payload
 
 
@@ -405,7 +436,7 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
     for item in bowling_outcomes_rows:
         bowling_outcomes[str(item["outcome_label"])] = int(item["deliveries"])
 
-    photo = _photo_payload(player_name)
+    photo = _photo_payload(conn, player_name)
 
     return {
         "player": {

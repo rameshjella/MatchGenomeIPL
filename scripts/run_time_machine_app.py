@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
 from matchgenomeipl.http_transport import create_http_server
 from matchgenomeipl.ingestion import ensure_dataset_ready
 from matchgenomeipl.database import connect_db, database_runtime_status
+from matchgenomeipl.enrichment import run_cricsheet_enrichment
 from matchgenomeipl.runtime_logging import log_event
 
 
@@ -31,6 +32,7 @@ def main() -> None:
     bootstrap_conn = connect_db(db_path)
     try:
         stats = ensure_dataset_ready(bootstrap_conn, csv_path)
+        enrichment_stats = run_cricsheet_enrichment(bootstrap_conn, ROOT, force_refresh=False)
         db_status = database_runtime_status(bootstrap_conn)
     finally:
         bootstrap_conn.close()
@@ -52,6 +54,13 @@ def main() -> None:
         "Runtime status",
         dataset_status=db_status.get("dataset_status"),
         deliveries=db_status.get("deliveries"),
+    )
+    log_event(
+        "ENRICHMENT",
+        "Cricsheet enrichment ready",
+        matches_enriched=enrichment_stats.get("matches_enriched"),
+        match_metadata_rows=enrichment_stats.get("match_metadata_rows"),
+        team_identities=enrichment_stats.get("team_identities"),
     )
 
     server = create_http_server(db_path=db_path, host=host, port=port)

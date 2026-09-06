@@ -67,7 +67,7 @@ class BrowserSmokeTests(unittest.TestCase):
         with urlopen(self._url("/")) as response:
             html = response.read().decode("utf-8")
         self.assertIn("Reveal the ball to see actual outcome.", html)
-        self.assertIn("Cricket Intelligence Studio", html)
+        self.assertIn("See the prediction before you see the outcome.", html)
         self.assertIn("Players", html)
         self.assertIn("Match Discovery", html)
         self.assertIn("matchCards", html)

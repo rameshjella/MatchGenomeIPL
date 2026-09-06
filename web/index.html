@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MatchGenomeIPL - Cricket Intelligence Studio</title>
+    <title>MatchGenomeIPL - IPL Intelligence Studio</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -11,27 +11,61 @@
       <header class="app-shell card">
         <div class="brand">
           <h1>MatchGenomeIPL</h1>
-          <p class="eyebrow">Cricket Intelligence Studio</p>
-          <p>Predict before reality is revealed. Explore real IPL deliveries, reveal what happened, and understand why MatchGenome expected it.</p>
+          <p class="eyebrow">See the prediction before you see the outcome.</p>
+          <p>Explore IPL history ball by ball, see what MatchGenome predicted before each delivery, reveal what actually happened, and understand the evidence behind the call.</p>
         </div>
         <nav class="mode-nav" aria-label="Product navigation">
-          <button id="goTimeMachineBtn" class="primary" type="button" aria-current="page">Time Machine</button>
+          <button id="goHomeBtn" class="primary" type="button" aria-current="page">Home</button>
+          <button id="goTimeMachineBtn" type="button">Time Machine</button>
           <button id="goPlayerIntelligenceBtn" type="button">Players</button>
+          <button id="goMethodologyBtn" type="button">Methodology</button>
         </nav>
       </header>
 
-      <section class="card intro" id="productIntro" aria-label="Product intro">
-        <h2>Predict the Next IPL Ball</h2>
-        <p class="muted">Start with a season and match, see MatchGenome's prediction before reveal, and compare it against reality ball by ball.</p>
-        <div class="intro-actions">
-          <button id="exploreMatchBtn" class="primary" type="button">Explore a Match</button>
-          <button id="goPlayersIntroBtn" type="button">Players</button>
-        </div>
+      <section id="homeView" class="view-stack">
+        <section class="card intro" id="productIntro" aria-label="Product intro">
+          <h2>MATCHGENOMEIPL</h2>
+          <h3>See the prediction before you see the outcome.</h3>
+          <p class="muted">Explore real IPL history through the signature loop: <strong>Before the Ball -> Prediction -> Reveal -> Actual -> Learn</strong>.</p>
+          <div class="launch-grid">
+            <article class="launch-card">
+              <p class="eyebrow">TIME MACHINE</p>
+              <h4>Replay the IPL</h4>
+              <p class="muted">See what MatchGenome predicted before the ball, then reveal reality.</p>
+              <button id="exploreMatchBtn" class="primary" type="button">Explore a Match</button>
+            </article>
+            <article class="launch-card">
+              <p class="eyebrow">PLAYER INTELLIGENCE</p>
+              <h4>Understand the players</h4>
+              <p class="muted">Explore batting, bowling, phases, matchups and historical patterns.</p>
+              <button id="goPlayersIntroBtn" type="button">Explore Players</button>
+            </article>
+            <article class="launch-card">
+              <p class="eyebrow">FEATURED REPLAY</p>
+              <h4>First Ball Experience</h4>
+              <p class="muted">Jump into a deterministic real-data replay and try prediction vs reality.</p>
+              <button id="openFeaturedReplayBtn" type="button">Open Featured Replay</button>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <section id="methodologyView" class="view-stack" hidden>
+        <section class="card">
+          <h2>Methodology</h2>
+          <p class="muted">MatchGenomeIPL predicts the next outcome using only data available before each historical ball, then reveals reality and scores correctness.</p>
+          <ul>
+            <li>Prediction appears first, actual outcome is hidden until reveal.</li>
+            <li>Analytical delivery truth remains in SQLite and is not overwritten by enrichment.</li>
+            <li>Match and team identity metadata is enriched from Cricsheet IPL JSON with provenance.</li>
+            <li>Technical evidence remains available through progressive disclosure.</li>
+          </ul>
+        </section>
       </section>
 
       <section id="statusBanner" class="status card" hidden></section>
 
-      <section id="timeMachineView" class="view-stack">
+      <section id="timeMachineView" class="view-stack" hidden>
         <section class="selector card" aria-label="Match discovery">
           <h2>Match Discovery</h2>
           <p class="muted">Choose a season, find a match by teams, then pick innings to start replay.</p>

@@ -248,6 +248,21 @@ class TimeMachineService:
         log_sql(operation, sql, params, started, row_count=0 if row is None else 1)
         return row
 
+    def _resolve_team_label(self, match_id: int, internal_team_code: Any) -> str:
+        raw = "" if internal_team_code is None else str(internal_team_code)
+        row = self._fetchone(
+            "resolve_team_label",
+            """
+            SELECT historical_display_name
+            FROM match_team_map
+            WHERE match_id = ? AND internal_team_code = ?
+            """,
+            (match_id, raw),
+        )
+        if row is None:
+            return raw
+        return str(row["historical_display_name"])
+
     def list_seasons(self) -> list[dict[str, Any]]:
         rows = self._fetchall(
             "list_seasons",
@@ -285,8 +300,12 @@ class TimeMachineService:
                 s.season_id,
                 s.is_super_over_match,
                 s.season_match_number,
-                COALESCE(i1.team_batting, i_any.team_batting) AS team_a,
-                COALESCE(i1.team_bowling, i_any.team_bowling) AS team_b,
+                COALESCE(mm.team_a_display, mtm_a.historical_display_name, i1.team_batting, i_any.team_batting) AS team_a,
+                COALESCE(mm.team_b_display, mtm_b.historical_display_name, i1.team_bowling, i_any.team_bowling) AS team_b,
+                COALESCE(mm.match_number, s.season_match_number) AS match_number,
+                mm.match_date,
+                mm.venue,
+                mm.city,
                 COUNT(DISTINCT i.innings) AS innings_count,
                 COALESCE(SUM(i.deliveries), 0) AS deliveries
             FROM season_match_ids s
@@ -296,7 +315,13 @@ class TimeMachineService:
               ON i1.match_id = s.match_id AND i1.season_id = s.season_id AND i1.innings = 1
             LEFT JOIN innings_summary i_any
               ON i_any.match_id = s.match_id AND i_any.season_id = s.season_id
-            GROUP BY s.match_id, s.season_id, s.is_super_over_match, s.season_match_number, team_a, team_b
+            LEFT JOIN match_metadata mm
+              ON mm.match_id = s.match_id
+            LEFT JOIN match_team_map mtm_a
+              ON mtm_a.match_id = s.match_id AND mtm_a.internal_team_code = i1.team_batting
+            LEFT JOIN match_team_map mtm_b
+              ON mtm_b.match_id = s.match_id AND mtm_b.internal_team_code = i1.team_bowling
+            GROUP BY s.match_id, s.season_id, s.is_super_over_match, s.season_match_number, team_a, team_b, match_number, mm.match_date, mm.venue, mm.city
             ORDER BY s.match_id
             """,
             (season_id,),
@@ -308,6 +333,10 @@ class TimeMachineService:
                 "season_match_number": int(r["season_match_number"]),
                 "team_a": r["team_a"],
                 "team_b": r["team_b"],
+                "match_number": int(r["match_number"]) if r["match_number"] is not None else None,
+                "match_date": r["match_date"],
+                "venue": r["venue"],
+                "city": r["city"],
                 "is_super_over_match": int(r["is_super_over_match"]),
                 "innings_count": int(r["innings_count"]),
                 "deliveries": int(r["deliveries"]),
@@ -328,14 +357,51 @@ class TimeMachineService:
         if row is None:
             raise ValueError("match_id not found")
 
+        meta = self._fetchone(
+            "get_match_metadata",
+            """
+            SELECT
+                match_number,
+                match_date,
+                venue,
+                city,
+                toss_winner,
+                toss_decision,
+                winner,
+                result_type,
+                result_margin,
+                match_type,
+                player_of_match,
+                team_a_display,
+                team_b_display
+            FROM match_metadata
+            WHERE match_id = ?
+            """,
+            (match_id,),
+        )
+
         return {
             "match_id": int(row["match_id"]),
             "season_id": int(row["season_id"]),
             "is_super_over_match": int(row["is_super_over_match"]),
             "metadata": {
-                "venue": None,
-                "match_date": None,
-                "toss": None,
+                "venue": meta["venue"] if meta else None,
+                "city": meta["city"] if meta else None,
+                "match_date": meta["match_date"] if meta else None,
+                "match_number": int(meta["match_number"]) if meta and meta["match_number"] is not None else None,
+                "match_type": meta["match_type"] if meta else None,
+                "team_a_display": meta["team_a_display"] if meta else None,
+                "team_b_display": meta["team_b_display"] if meta else None,
+                "toss": {
+                    "winner": meta["toss_winner"] if meta else None,
+                    "decision": meta["toss_decision"] if meta else None,
+                },
+                "outcome": {
+                    "winner": meta["winner"] if meta else None,
+                    "result_type": meta["result_type"] if meta else None,
+                    "result_margin": int(meta["result_margin"]) if meta and meta["result_margin"] is not None else None,
+                    "player_of_match": meta["player_of_match"] if meta else None,
+                },
             },
         }
 
@@ -352,20 +418,26 @@ class TimeMachineService:
         )
         if not rows:
             raise ValueError("match_id not found")
-        return [
-            {
-                "season_id": int(r["season_id"]),
-                "match_id": int(r["match_id"]),
-                "innings": int(r["innings"]),
-                "team_batting": r["team_batting"],
-                "team_bowling": r["team_bowling"],
-                "deliveries": int(r["deliveries"]),
-                "legal_balls": int(r["legal_balls"]),
-                "runs": int(r["runs"]),
-                "wickets": int(r["wickets"]),
-            }
-            for r in rows
-        ]
+        payload: list[dict[str, Any]] = []
+        for r in rows:
+            team_batting_raw = r["team_batting"]
+            team_bowling_raw = r["team_bowling"]
+            payload.append(
+                {
+                    "season_id": int(r["season_id"]),
+                    "match_id": int(r["match_id"]),
+                    "innings": int(r["innings"]),
+                    "team_batting": self._resolve_team_label(match_id, team_batting_raw),
+                    "team_bowling": self._resolve_team_label(match_id, team_bowling_raw),
+                    "team_batting_internal": "" if team_batting_raw is None else str(team_batting_raw),
+                    "team_bowling_internal": "" if team_bowling_raw is None else str(team_bowling_raw),
+                    "deliveries": int(r["deliveries"]),
+                    "legal_balls": int(r["legal_balls"]),
+                    "runs": int(r["runs"]),
+                    "wickets": int(r["wickets"]),
+                }
+            )
+        return payload
 
     def create_replay_session(
         self,

@@ -7,7 +7,6 @@ import traceback
 from pathlib import Path
 
 from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
 from selenium.webdriver import ActionChains
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -64,8 +63,7 @@ class VisualQaRunner:
 
     def run(self) -> dict[str, object]:
         self.driver.get(BASE_URL)
-        self.wait.until(EC.visibility_of_element_located((By.ID, "matchCards")))
-        self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#matchCards .match-card")) > 0)
+        self.wait.until(EC.visibility_of_element_located((By.ID, "homeView")))
 
         self.results["checks"]["five_second_branding"] = {
             "h1": self._text(".brand h1"),
@@ -76,8 +74,12 @@ class VisualQaRunner:
             "players": self.driver.find_element(By.ID, "goPlayersIntroBtn").is_displayed(),
         }
 
-        self._save("01_landing")
-        self._check_overflow("landing")
+        self._save("01_home")
+        self._check_overflow("home")
+
+        self.driver.find_element(By.ID, "exploreMatchBtn").click()
+        self.wait.until(lambda d: not d.find_element(By.ID, "timeMachineView").get_attribute("hidden"))
+        self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#matchCards .match-card")) > 0)
 
         cards = self.driver.find_elements(By.CSS_SELECTOR, "#matchCards .match-card")
         first_teams_text = cards[0].find_element(By.CSS_SELECTOR, ".match-teams").text.strip()
@@ -86,17 +88,23 @@ class VisualQaRunner:
             "raw_numeric_vs_numeric": bool(re.fullmatch(r"\d+\s+vs\s+\d+", first_teams_text)),
             "has_team_prefix": "Team " in first_teams_text,
         }
-        cards[0].click()
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", cards[0])
+        self.driver.execute_script("arguments[0].click();", cards[0])
         self.wait.until(lambda d: d.find_element(By.ID, "inningsSelect").get_attribute("value") is not None)
         self._save("02_match_discovery")
         self._check_overflow("discovery")
 
-        self.driver.find_element(By.ID, "startReplayBtn").click()
+        start_btn = self.driver.find_element(By.ID, "startReplayBtn")
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", start_btn)
+        self.driver.execute_script("arguments[0].click();", start_btn)
         self.wait.until(EC.visibility_of_element_located((By.ID, "replayPanel")))
+        self._save("03_selected_match")
 
-        self.driver.find_element(By.ID, "predictBtn").click()
+        predict_btn = self.driver.find_element(By.ID, "predictBtn")
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", predict_btn)
+        self.driver.execute_script("arguments[0].click();", predict_btn)
         self.wait.until(lambda d: d.find_element(By.ID, "predictedTop").text.strip() not in {"", "-"})
-        self._save("03_prediction")
+        self._save("04_before_ball_prediction")
         self._check_overflow("prediction")
 
         actual_before = self._text("#actualBlock")
@@ -104,14 +112,16 @@ class VisualQaRunner:
 
         self.driver.find_element(By.ID, "tabEvidenceBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "panelEvidence")))
-        self._save("04_evidence")
+        self._save("07_evidence")
         self._check_overflow("evidence")
 
         self.driver.find_element(By.ID, "tabPredictionBtn").click()
-        self.driver.find_element(By.ID, "revealBtn").click()
+        reveal_btn = self.driver.find_element(By.ID, "revealBtn")
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", reveal_btn)
+        self.driver.execute_script("arguments[0].click();", reveal_btn)
         self.wait.until(lambda d: "Actual Outcome" in d.find_element(By.ID, "actualBlock").text)
         self.results["checks"]["replay_accuracy_semantics"] = self._text("#accuracyValue")
-        self._save("05_reveal")
+        self._save("05_reveal_state")
         self._check_overflow("reveal")
 
         self.driver.find_element(By.ID, "tabBallByBallBtn").click()
@@ -119,60 +129,52 @@ class VisualQaRunner:
         self._save("06_ball_by_ball")
         self._check_overflow("ball_by_ball")
 
-        self.driver.find_element(By.ID, "tabPredictionBtn").click()
-        batter_btn = self.driver.find_element(By.ID, "batterValue")
-        batter_name = batter_btn.text.strip()
-        batter_btn.click()
+        self.driver.find_element(By.ID, "goPlayerIntelligenceBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "playerView")))
+        self.driver.find_element(By.ID, "playerSearchInput").clear()
+        self.driver.find_element(By.ID, "playerSearchInput").send_keys("gang")
+        search_btn = self.driver.find_element(By.ID, "playerSearchBtn")
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_btn)
+        self.driver.execute_script("arguments[0].click();", search_btn)
+        self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")) > 0)
+        self._save("08_player_search")
+
+        first_result = self.driver.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")[0]
+        first_result.click()
         self.wait.until(lambda d: d.find_element(By.ID, "playerPanel").is_displayed())
-        self._save("07_player_overview")
+        self._save("09_player_overview")
         self._check_overflow("player_overview")
 
+        for tab_id, shot in [
+            ("playerTabBattingBtn", "10_player_batting"),
+            ("playerTabBowlingBtn", "11_player_bowling"),
+            ("playerTabMatchupsBtn", "12_player_matchups"),
+            ("playerTabSeasonsBtn", "13_player_seasons"),
+            ("playerTabPhasesBtn", "14_player_phases"),
+        ]:
+            nodes = self.driver.find_elements(By.ID, tab_id)
+            if nodes and nodes[0].is_displayed():
+                nodes[0].click()
+                time.sleep(0.25)
+                self._save(shot)
+
         self.results["checks"]["player_name_from_replay"] = {
-            "batter_button": batter_name,
             "profile_name": self._text("#playerName"),
         }
         self.results["checks"]["player_photo_meta"] = self._text("#playerPhotoMeta")
 
-        tab_ids = ["playerTabBattingBtn", "playerTabMatchupsBtn", "playerTabSeasonsBtn", "playerTabPhasesBtn"]
-        for tab_id in tab_ids:
-            matches = self.driver.find_elements(By.ID, tab_id)
-            if not matches or not matches[0].is_displayed():
-                continue
-            matches[0].click()
-            time.sleep(0.35)
-
-        self._save("08_player_analytics")
-        self._check_overflow("player_analytics")
+        self.driver.find_element(By.ID, "goTimeMachineBtn").click()
+        self.wait.until(EC.visibility_of_element_located((By.ID, "timeMachineView")))
+        self.driver.find_element(By.ID, "tabPredictionBtn").click()
+        batter_btn = self.driver.find_element(By.ID, "batterValue")
+        batter_btn.click()
+        self.wait.until(EC.visibility_of_element_located((By.ID, "playerView")))
+        self.wait.until(lambda d: d.find_element(By.ID, "playerPanel").is_displayed())
+        self._save("15_match_to_player_navigation")
 
         self.driver.find_element(By.ID, "backToReplayBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "timeMachineView")))
-        self._save("09_back_to_replay")
-        self._check_overflow("back_to_replay")
-
-        # Journey B: open Players from nav, search, open profile, traverse tabs.
-        self.driver.get(f"{BASE_URL}#view=player")
-        self.wait.until(EC.visibility_of_element_located((By.ID, "playerView")))
-        q = self.driver.find_element(By.ID, "playerSearchInput")
-        q.clear()
-        q.send_keys("gang")
-        q.send_keys(Keys.ENTER)
-        try:
-            self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")) > 0)
-        except TimeoutException:
-            self.driver.find_element(By.ID, "playerSearchBtn").click()
-            self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")) > 0)
-        first_result = self.driver.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")[0]
-        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", first_result)
-        self.driver.execute_script("arguments[0].click();", first_result)
-        self.wait.until(lambda d: d.find_element(By.ID, "playerPanel").is_displayed())
-        for tab_id in ["playerTabOverviewBtn", "playerTabBattingBtn", "playerTabBowlingBtn", "playerTabMatchupsBtn", "playerTabSeasonsBtn", "playerTabPhasesBtn"]:
-            nodes = self.driver.find_elements(By.ID, tab_id)
-            if nodes and nodes[0].is_displayed():
-                nodes[0].click()
-                time.sleep(0.2)
-        self._save("10_players_search_journey")
-        self._check_overflow("players_search_journey")
+        self._save("16_player_to_match_navigation")
 
         # Keyboard focus progression sanity check.
         body = self.driver.find_element(By.TAG_NAME, "body")
