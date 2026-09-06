@@ -207,6 +207,11 @@ class TimeMachineTests(unittest.TestCase):
             self.api.post_replay_predict(session_id)
             self.api.post_replay_reveal(session_id)
 
+    def test_player_profile_can_include_replay_entry_point(self) -> None:
+        session_id = self._create_default_session_id()
+        player = self.api.get_player("PlayerA", session_id=session_id)
+        self.assertEqual(player["entry_points"]["return_to_replay"]["session_id"], session_id)
+
 
 if __name__ == "__main__":
     unittest.main()

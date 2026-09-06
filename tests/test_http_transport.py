@@ -76,7 +76,13 @@ class HttpTransportTests(unittest.TestCase):
         with urlopen(self._url("/")) as response:
             body = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
-            self.assertIn("MatchGenome Time Machine", body)
+            self.assertIn("Cricket Intelligence Studio", body)
+
+    def test_local_player_asset_is_served(self) -> None:
+        with urlopen(self._url("/assets/players/tm_head.svg")) as response:
+            body = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertIn("<svg", body)
 
     def test_player_endpoints(self) -> None:
         status, players = self._get("/api/players")
@@ -88,6 +94,22 @@ class HttpTransportTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("overview", profile)
         self.assertIn("player", profile)
+
+    def test_player_search_partial_name(self) -> None:
+        status, players = self._get("/api/players?query=yerA&limit=10")
+        self.assertEqual(status, 200)
+        names = [item["player_name"] for item in players["players"]]
+        self.assertIn("PlayerA", names)
+
+    def test_player_endpoint_with_session_context(self) -> None:
+        status, created = self._post("/api/replays", {"match_id": 1, "innings": 1})
+        self.assertEqual(status, 201)
+        session_id = created["session_id"]
+
+        status, profile = self._get(f"/api/players/{quote('PlayerA')}?session_id={session_id}")
+        self.assertEqual(status, 200)
+        self.assertIn("entry_points", profile)
+        self.assertEqual(profile["entry_points"]["return_to_replay"]["session_id"], session_id)
 
     def test_replay_predict_reveal_and_completion(self) -> None:
         status, created = self._post("/api/replays", {"match_id": 1, "innings": 1})
@@ -132,6 +154,10 @@ class HttpTransportTests(unittest.TestCase):
     def test_csv_is_not_served(self) -> None:
         with self.assertRaises(HTTPError):
             urlopen(self._url("/data/ipl_ball_by_ball_data.csv"))
+
+    def test_assets_path_traversal_is_rejected(self) -> None:
+        with self.assertRaises(HTTPError):
+            urlopen(self._url("/assets/../data/ipl_ball_by_ball_data.csv"))
 
 
 if __name__ == "__main__":

@@ -67,6 +67,8 @@ class BrowserSmokeTests(unittest.TestCase):
         with urlopen(self._url("/")) as response:
             html = response.read().decode("utf-8")
         self.assertIn("Reveal the ball to see actual outcome.", html)
+        self.assertIn("Cricket Intelligence Studio", html)
+        self.assertIn("Player Intelligence", html)
 
         seasons = self._get_json("/api/seasons")["seasons"]
         season_id = int(seasons[-1]["season_id"])
@@ -90,8 +92,10 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertIn("prediction", next_prediction)
 
         batter_name = quote(str(next_prediction["delivery"]["batter"]))
-        player = self._get_json(f"/api/players/{batter_name}")
+        player = self._get_json(f"/api/players/{batter_name}?session_id={session_id}")
         self.assertEqual(str(player["player"]["name"]), str(next_prediction["delivery"]["batter"]))
+        self.assertIn("entry_points", player)
+        self.assertEqual(player["entry_points"]["return_to_replay"]["session_id"], session_id)
 
         self._post_json(f"/api/replays/{session_id}/restart")
         replayed_first = self._post_json(f"/api/replays/{session_id}/predict")

@@ -59,6 +59,6 @@ class TimeMachineAPI:
             "players": self.service.list_players(query=query, limit=limit),
         }
 
-    def get_player(self, player_name: str) -> dict[str, Any]:
-        return self.service.get_player(player_name)
+    def get_player(self, player_name: str, session_id: str | None = None) -> dict[str, Any]:
+        return self.service.get_player(player_name, session_id=session_id)
 

@@ -115,7 +115,9 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/players/(.+)", route)
             if match:
                 player_name = unquote(match.group(1))
-                _json_response(self, HTTPStatus.OK, self._app().api.get_player(player_name))
+                session_id_values = query.get("session_id", [])
+                session_id = str(session_id_values[0]) if session_id_values else None
+                _json_response(self, HTTPStatus.OK, self._app().api.get_player(player_name, session_id=session_id))
                 return
 
             status_code = self._serve_static()
@@ -194,11 +196,17 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
             rel = "index.html"
         elif path in ("/app.js", "/styles.css", "/player_photos.json"):
             rel = path[1:]
+        elif path.startswith("/assets/"):
+            rel = path[1:]
         else:
             _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("not_found", "Unknown endpoint"))
             return int(HTTPStatus.NOT_FOUND)
 
-        file_path = app.static_dir / rel
+        root = app.static_dir.resolve()
+        file_path = (app.static_dir / rel).resolve()
+        if not str(file_path).startswith(str(root)):
+            _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("not_found", "Unknown endpoint"))
+            return int(HTTPStatus.NOT_FOUND)
         if not file_path.exists():
             _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("not_found", "Static file not found"))
             return int(HTTPStatus.NOT_FOUND)
@@ -209,6 +217,14 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
             content_type = "application/javascript; charset=utf-8"
         elif rel.endswith(".css"):
             content_type = "text/css; charset=utf-8"
+        elif rel.endswith(".json"):
+            content_type = "application/json; charset=utf-8"
+        elif rel.endswith(".svg"):
+            content_type = "image/svg+xml"
+        elif rel.endswith(".png"):
+            content_type = "image/png"
+        elif rel.endswith(".jpg") or rel.endswith(".jpeg"):
+            content_type = "image/jpeg"
 
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)

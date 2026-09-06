@@ -9,7 +9,7 @@ MatchGenomeIPL combines:
 - a deterministic next-ball prediction engine,
 - strict chronology-safe replay,
 - evidence and reliability reporting,
-- and a user-facing Time Machine UI over real IPL data.
+- and connected Time Machine plus Player Intelligence experiences over real IPL data.
 
 ## Problem It Solves
 
@@ -30,7 +30,8 @@ Prediction is shown before reveal, then reality is revealed and scored. This pre
 - Deterministic hierarchical baseline prediction with evidence and reliability.
 - Time Machine session lifecycle (`predict -> reveal -> update`).
 - HTTP API transport and browser UI.
-- Player Intelligence pages (overview, phase/season splits, matchups, sample sizes).
+- Player Intelligence profiles with role-aware sections, season/phase splits, matchup reliability, and replay return links.
+- Lightweight player discovery search backed directly by SQLite.
 
 ## Current vs Future Scope
 
@@ -75,6 +76,16 @@ flowchart TD
     Reveal --> Actual[Actual outcome]
     Actual --> Score[Correct / Incorrect]
     Score --> Advance[Advance to next delivery]
+```
+
+## Product Navigation Flow
+
+```text
+MatchGenomeIPL
+  -> Time Machine (predict before reveal)
+  -> Click batter / non-striker / bowler
+  -> Player Intelligence (career + contextual evidence)
+  -> Return to Time Machine (same replay context)
 ```
 
 ## Runtime Flow (Startup)
@@ -158,6 +169,11 @@ Open `http://127.0.0.1:8080`.
 - `GET /api/players`
 - `GET /api/players/{player_name}`
 
+Player API notes:
+
+- `GET /api/players?query=<partial>&limit=<n>` supports case-insensitive partial matching.
+- `GET /api/players/{player_name}?session_id=<replay_id>` includes optional replay entry-point metadata.
+
 ## Player Intelligence
 
 Player metrics are derived from SQLite (no fabricated data), including:
@@ -167,11 +183,20 @@ Player metrics are derived from SQLite (no fabricated data), including:
 - outcome distributions,
 - matchup evidence with sample-size thresholds.
 
+Metric definitions:
+
+- batting balls faced: deliveries where `is_wide_ball = 0`.
+- bowling runs conceded: `total_runs - bye_runs - leg_bye_runs`.
+- bowling wickets: excludes non-bowler dismissal kinds defined in constants.
+- innings phase: computed from legal balls before delivery (`powerplay < 36`, `middle < 90`, else `death`).
+- outcome labels: `0`, `1`, `2`, `3+`, `4`, `6`, `wicket`.
+
 ### Player Photo Strategy
 
-- Local photo map file: `web/player_photos.json`.
-- If mapped: serve local/static image URL.
-- If not mapped: graceful initials placeholder avatar.
+- Local map file: `web/player_photos.json`.
+- Mapped assets are served from `web/assets/players/`.
+- Current mapped subset: `TM Head`, `V Kohli`, `RG Sharma`, `JJ Bumrah`, `MS Dhoni`, `RR Pant`.
+- If not mapped: deterministic initials placeholder avatar.
 - No external photo API dependency is required at runtime.
 
 ## Performance (Measured)
@@ -182,6 +207,7 @@ Recent measured values (real DB, local run):
 - first prediction request: ~`0.65-0.72s`.
 - reveal request: ~`0.002-0.005s`.
 - next prediction request: ~`0.001-0.003s`.
+- player intelligence request: baseline ~`0.95391s`, current ~`0.96314s`.
 - 10-step replay loop over HTTP: ~`0.038-0.083s` total.
 - discovery endpoints typically milliseconds.
 
@@ -211,7 +237,7 @@ python scripts/run_time_machine_vertical_slice.py
 
 - Replay sessions are in-memory (not persisted across process restart).
 - Some match metadata (venue/date/toss) is unavailable in local dataset.
-- Player photo catalog is intentionally conservative; placeholders are default.
+- Player photo coverage is intentionally conservative and uses repository-generated local avatar illustrations.
 - Timeline focuses on efficient recent context rather than unrestricted deep seeking.
 
 ## Repository Layout

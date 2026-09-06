@@ -292,6 +292,18 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_deliveries_team_timeline
             ON deliveries(team_batting, team_bowling, timeline_key);
 
+        CREATE INDEX IF NOT EXISTS idx_deliveries_batter
+            ON deliveries(batter);
+
+        CREATE INDEX IF NOT EXISTS idx_deliveries_bowler
+            ON deliveries(bowler);
+
+        CREATE INDEX IF NOT EXISTS idx_deliveries_non_striker
+            ON deliveries(non_striker);
+
+        CREATE INDEX IF NOT EXISTS idx_deliveries_player_out
+            ON deliveries(player_out);
+
         CREATE INDEX IF NOT EXISTS idx_deliveries_outcome
             ON deliveries(is_wicket, total_runs);
 

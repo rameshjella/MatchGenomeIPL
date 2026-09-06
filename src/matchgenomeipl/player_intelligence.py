@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 import sqlite3
 from typing import Any
@@ -7,7 +8,8 @@ from typing import Any
 from .constants import NON_BOWLER_WICKETS
 
 
-def _player_photo_map() -> dict[str, str]:
+@lru_cache(maxsize=1)
+def _player_photo_map() -> dict[str, dict[str, Any]]:
     mapping_path = Path(__file__).resolve().parents[2] / "web" / "player_photos.json"
     if not mapping_path.exists():
         return {}
@@ -16,7 +18,21 @@ def _player_photo_map() -> dict[str, str]:
 
         payload = json.loads(mapping_path.read_text(encoding="utf-8"))
         if isinstance(payload, dict):
-            return {str(k): str(v) for k, v in payload.items()}
+            mapped: dict[str, dict[str, Any]] = {}
+            for key, value in payload.items():
+                name = str(key)
+                if isinstance(value, str):
+                    mapped[name] = {"kind": "local", "url": value, "source": "local_mapping"}
+                elif isinstance(value, dict):
+                    url = str(value.get("url", "")).strip()
+                    if url:
+                        mapped[name] = {
+                            "kind": "local",
+                            "url": url,
+                            "source": str(value.get("source", "local_mapping")),
+                            "license": value.get("license"),
+                        }
+            return mapped
     except Exception:
         return {}
     return {}
@@ -54,28 +70,53 @@ def _delivery_outcome_case() -> str:
     )
 
 
+def _phase_order(phase: str) -> int:
+    return {"powerplay": 0, "middle": 1, "death": 2}.get(phase, 99)
+
+
+def _avatar_seed(name: str) -> int:
+    return sum(ord(ch) for ch in name) % 360
+
+
+def _photo_payload(player_name: str) -> dict[str, Any]:
+    photo_map = _player_photo_map()
+    if player_name in photo_map:
+        return photo_map[player_name]
+    return {"kind": "placeholder", "initials": _initials(player_name), "seed": _avatar_seed(player_name)}
+
+
+def _evidence_tier(sample_size: int) -> str:
+    if sample_size >= 120:
+        return "high"
+    if sample_size >= 40:
+        return "medium"
+    if sample_size >= 12:
+        return "low"
+    return "small"
+
+
 def list_players(conn: sqlite3.Connection, query: str = "", limit: int = 50) -> list[dict[str, Any]]:
-    q = f"%{query.strip().lower()}%"
+    raw = query.strip().lower()
+    normalized = raw.replace(" ", "")
+    q = f"%{raw}%"
+    normalized_q = f"%{normalized}%"
     rows = conn.execute(
         """
         SELECT player_name
         FROM players
-        WHERE ? = '%%' OR LOWER(player_name) LIKE ?
+        WHERE ? = ''
+           OR LOWER(player_name) LIKE ?
+           OR REPLACE(LOWER(player_name), ' ', '') LIKE ?
         ORDER BY player_name
         LIMIT ?
         """,
-        (q, q, max(1, min(limit, 200))),
+        (raw, q, normalized_q, max(1, min(limit, 200))),
     ).fetchall()
 
-    photo_map = _player_photo_map()
     payload: list[dict[str, Any]] = []
     for row in rows:
         name = str(row["player_name"])
-        if name in photo_map:
-            photo = {"kind": "local", "url": photo_map[name], "source": "local_mapping"}
-        else:
-            photo = {"kind": "placeholder", "initials": _initials(name)}
-        payload.append({"player_name": name, "photo": photo})
+        payload.append({"player_name": name, "photo": _photo_payload(name)})
     return payload
 
 
@@ -86,14 +127,20 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
 
     placeholders = ",".join("?" for _ in NON_BOWLER_WICKETS)
 
-    batting = conn.execute(
+    batting_agg = conn.execute(
+        """
+        SELECT runs, balls_faced, fours, sixes, dots
+        FROM batter_stats_agg
+        WHERE batter = ?
+        """,
+        (player_name,),
+    ).fetchone()
+    if batting_agg is None:
+        batting_agg = {"runs": 0, "balls_faced": 0, "fours": 0, "sixes": 0, "dots": 0}
+
+    batting_meta = conn.execute(
         """
         SELECT
-            COALESCE(SUM(batter_runs), 0) AS runs,
-            COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls,
-            COALESCE(SUM(CASE WHEN batter_runs = 4 THEN 1 ELSE 0 END), 0) AS fours,
-            COALESCE(SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes,
-            COALESCE(SUM(CASE WHEN total_runs = 0 AND is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS dots,
             COALESCE(SUM(CASE WHEN is_wicket = 1 AND player_out = ? THEN 1 ELSE 0 END), 0) AS outs,
             COUNT(DISTINCT season_id || '-' || match_id || '-' || innings) AS innings
         FROM deliveries
@@ -102,18 +149,27 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
         (player_name, player_name),
     ).fetchone()
 
-    bowling = conn.execute(
-        f"""
-        SELECT
-            COALESCE(SUM(total_runs - bye_runs - leg_bye_runs), 0) AS runs_conceded,
-            COALESCE(SUM(legal_ball), 0) AS legal_balls,
-            COALESCE(SUM(CASE WHEN is_wicket = 1 AND LOWER(COALESCE(wicket_kind, '')) NOT IN ({placeholders}) THEN 1 ELSE 0 END), 0) AS wickets,
-            COALESCE(SUM(CASE WHEN total_runs = 0 THEN 1 ELSE 0 END), 0) AS dots,
-            COUNT(DISTINCT season_id || '-' || match_id || '-' || innings) AS innings
+    bowling_agg = conn.execute(
+        """
+        SELECT runs_conceded, legal_balls, wickets, dots
+        FROM bowler_stats_agg
+        WHERE bowler = ?
+        """,
+        (player_name,),
+    ).fetchone()
+    if bowling_agg is None:
+        bowling_agg = {"runs_conceded": 0, "legal_balls": 0, "wickets": 0, "dots": 0}
+
+    batting_balls = int(batting_agg["balls_faced"])
+    bowling_balls = int(bowling_agg["legal_balls"])
+
+    bowling_meta = conn.execute(
+        """
+        SELECT COUNT(DISTINCT season_id || '-' || match_id || '-' || innings) AS innings
         FROM deliveries
         WHERE bowler = ?
         """,
-        tuple(NON_BOWLER_WICKETS) + (player_name,),
+        (player_name,),
     ).fetchone()
 
     total_matches = conn.execute(
@@ -125,160 +181,195 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
         (player_name, player_name, player_name, player_name, player_name),
     ).fetchone()
 
-    batting_by_season = conn.execute(
-        """
-        SELECT season_id,
-               SUM(batter_runs) AS runs,
-               SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END) AS balls,
-               SUM(CASE WHEN batter_runs IN (4, 6) THEN 1 ELSE 0 END) AS boundaries
-        FROM deliveries
-        WHERE batter = ?
-        GROUP BY season_id
-        ORDER BY season_id
-        """,
-        (player_name,),
-    ).fetchall()
+    batting_by_season: list[sqlite3.Row] = []
+    batting_by_phase: list[sqlite3.Row] = []
+    if batting_balls > 0:
+        batting_by_season = conn.execute(
+            """
+            SELECT season_id,
+                   SUM(batter_runs) AS runs,
+                   SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END) AS balls,
+                   SUM(CASE WHEN batter_runs = 4 THEN 1 ELSE 0 END) AS fours,
+                   SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END) AS sixes,
+                   SUM(CASE WHEN total_runs = 0 AND is_wide_ball = 0 THEN 1 ELSE 0 END) AS dots
+            FROM deliveries
+            WHERE batter = ?
+            GROUP BY season_id
+            ORDER BY season_id
+            """,
+            (player_name,),
+        ).fetchall()
 
-    batting_by_phase = conn.execute(
-        f"""
-        SELECT phase,
-               SUM(batter_runs) AS runs,
-               SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END) AS balls,
-               SUM(CASE WHEN total_runs = 0 AND is_wide_ball = 0 THEN 1 ELSE 0 END) AS dots
-        FROM (
-            SELECT base.*, {_phase_case()} AS phase
-            FROM (
-                SELECT d.*,
-                       COALESCE(
-                           SUM(legal_ball) OVER (
-                               PARTITION BY season_id, match_id, innings
-                               ORDER BY over_number, ball_number, source_row_number
-                               ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                           ),
-                           0
-                       ) AS legal_balls_before
-                FROM deliveries d
+        batting_by_phase = conn.execute(
+            f"""
+            WITH player_innings AS (
+                SELECT DISTINCT season_id, match_id, innings
+                FROM deliveries
                 WHERE batter = ?
-            ) base
-        )
-        GROUP BY phase
-        ORDER BY phase
-        """,
-        (player_name,),
-    ).fetchall()
-
-    bowling_by_season = conn.execute(
-        f"""
-        SELECT season_id,
-               SUM(total_runs - bye_runs - leg_bye_runs) AS runs_conceded,
-               SUM(legal_ball) AS legal_balls,
-               SUM(CASE WHEN is_wicket = 1 AND LOWER(COALESCE(wicket_kind, '')) NOT IN ({placeholders}) THEN 1 ELSE 0 END) AS wickets
-        FROM deliveries
-        WHERE bowler = ?
-        GROUP BY season_id
-        ORDER BY season_id
-        """,
-        tuple(NON_BOWLER_WICKETS) + (player_name,),
-    ).fetchall()
-
-    bowling_by_phase = conn.execute(
-        f"""
-        SELECT phase,
-               SUM(total_runs - bye_runs - leg_bye_runs) AS runs_conceded,
-               SUM(legal_ball) AS legal_balls,
-               SUM(CASE WHEN is_wicket = 1 AND LOWER(COALESCE(wicket_kind, '')) NOT IN ({placeholders}) THEN 1 ELSE 0 END) AS wickets
-        FROM (
-            SELECT base.*, {_phase_case()} AS phase
-            FROM (
-                SELECT d.*,
-                       COALESCE(
-                           SUM(legal_ball) OVER (
-                               PARTITION BY season_id, match_id, innings
-                               ORDER BY over_number, ball_number, source_row_number
-                               ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                           ),
-                           0
-                       ) AS legal_balls_before
+            ),
+            timeline AS (
+                SELECT
+                    d.*,
+                    COALESCE(
+                        SUM(d.legal_ball) OVER (
+                            PARTITION BY d.season_id, d.match_id, d.innings
+                            ORDER BY d.over_number, d.ball_number, d.source_row_number
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ),
+                        0
+                    ) AS legal_balls_before
                 FROM deliveries d
+                INNER JOIN player_innings pi
+                    ON pi.season_id = d.season_id
+                   AND pi.match_id = d.match_id
+                   AND pi.innings = d.innings
+            )
+            SELECT phase,
+                   SUM(batter_runs) AS runs,
+                   SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END) AS balls,
+                   SUM(CASE WHEN total_runs = 0 AND is_wide_ball = 0 THEN 1 ELSE 0 END) AS dots
+            FROM (
+                SELECT *, {_phase_case()} AS phase
+                FROM timeline
+                WHERE batter = ?
+            )
+            GROUP BY phase
+            """,
+            (player_name, player_name),
+        ).fetchall()
+
+    bowling_by_season: list[sqlite3.Row] = []
+    bowling_by_phase: list[sqlite3.Row] = []
+    if bowling_balls > 0:
+        bowling_by_season = conn.execute(
+            f"""
+            SELECT season_id,
+                   SUM(total_runs - bye_runs - leg_bye_runs) AS runs_conceded,
+                   SUM(legal_ball) AS legal_balls,
+                   SUM(CASE WHEN is_wicket = 1 AND LOWER(COALESCE(wicket_kind, '')) NOT IN ({placeholders}) THEN 1 ELSE 0 END) AS wickets,
+                   SUM(CASE WHEN total_runs = 0 THEN 1 ELSE 0 END) AS dots
+            FROM deliveries
+            WHERE bowler = ?
+            GROUP BY season_id
+            ORDER BY season_id
+            """,
+            tuple(NON_BOWLER_WICKETS) + (player_name,),
+        ).fetchall()
+
+        bowling_by_phase = conn.execute(
+            f"""
+            WITH player_innings AS (
+                SELECT DISTINCT season_id, match_id, innings
+                FROM deliveries
                 WHERE bowler = ?
-            ) base
-        )
-        GROUP BY phase
-        ORDER BY phase
-        """,
-        tuple(NON_BOWLER_WICKETS) + (player_name,),
-    ).fetchall()
+            ),
+            timeline AS (
+                SELECT
+                    d.*,
+                    COALESCE(
+                        SUM(d.legal_ball) OVER (
+                            PARTITION BY d.season_id, d.match_id, d.innings
+                            ORDER BY d.over_number, d.ball_number, d.source_row_number
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ),
+                        0
+                    ) AS legal_balls_before
+                FROM deliveries d
+                INNER JOIN player_innings pi
+                    ON pi.season_id = d.season_id
+                   AND pi.match_id = d.match_id
+                   AND pi.innings = d.innings
+            )
+            SELECT
+                phase,
+                SUM(total_runs - bye_runs - leg_bye_runs) AS runs_conceded,
+                SUM(legal_ball) AS legal_balls,
+                SUM(CASE WHEN is_wicket = 1 AND LOWER(COALESCE(wicket_kind, '')) NOT IN ({placeholders}) THEN 1 ELSE 0 END) AS wickets,
+                SUM(CASE WHEN total_runs = 0 THEN 1 ELSE 0 END) AS dots
+            FROM (
+                SELECT *, {_phase_case()} AS phase
+                FROM timeline
+                WHERE bowler = ?
+            )
+            GROUP BY phase
+            """,
+            (player_name,) + tuple(NON_BOWLER_WICKETS) + (player_name,),
+        ).fetchall()
 
-    batting_outcomes_rows = conn.execute(
-        f"""
-        SELECT {_delivery_outcome_case()} AS outcome_label, COUNT(*) AS deliveries
-        FROM deliveries
-        WHERE batter = ?
-        GROUP BY outcome_label
-        """,
-        (player_name,),
-    ).fetchall()
+    batting_outcomes_rows: list[sqlite3.Row] = []
+    bowling_outcomes_rows: list[sqlite3.Row] = []
+    if batting_balls > 0:
+        batting_outcomes_rows = conn.execute(
+            f"""
+            SELECT {_delivery_outcome_case()} AS outcome_label, COUNT(*) AS deliveries
+            FROM deliveries
+            WHERE batter = ?
+            GROUP BY outcome_label
+            """,
+            (player_name,),
+        ).fetchall()
+    if bowling_balls > 0:
+        bowling_outcomes_rows = conn.execute(
+            f"""
+            SELECT {_delivery_outcome_case()} AS outcome_label, COUNT(*) AS deliveries
+            FROM deliveries
+            WHERE bowler = ?
+            GROUP BY outcome_label
+            """,
+            (player_name,),
+        ).fetchall()
 
-    bowling_outcomes_rows = conn.execute(
-        f"""
-        SELECT {_delivery_outcome_case()} AS outcome_label, COUNT(*) AS deliveries
-        FROM deliveries
-        WHERE bowler = ?
-        GROUP BY outcome_label
-        """,
-        (player_name,),
-    ).fetchall()
+    batter_vs_bowler: list[sqlite3.Row] = []
+    bowler_vs_batter: list[sqlite3.Row] = []
+    batter_vs_bowler_type: list[sqlite3.Row] = []
+    bowler_vs_batter_type: list[sqlite3.Row] = []
+    if batting_balls > 0:
+        batter_vs_bowler = conn.execute(
+            """
+            SELECT bowler AS opponent, deliveries, runs, wickets
+            FROM batter_bowler_stats_agg
+            WHERE batter = ?
+            ORDER BY deliveries DESC, opponent
+            LIMIT 12
+            """,
+            (player_name,),
+        ).fetchall()
+        batter_vs_bowler_type = conn.execute(
+            """
+            SELECT COALESCE(bowler_type, 'unknown') AS opponent_type, deliveries, runs, wickets
+            FROM batter_bowler_type_stats_agg
+            WHERE batter = ?
+            ORDER BY deliveries DESC, opponent_type
+            LIMIT 8
+            """,
+            (player_name,),
+        ).fetchall()
+    if bowling_balls > 0:
+        bowler_vs_batter = conn.execute(
+            """
+            SELECT batter AS opponent, deliveries, runs, wickets
+            FROM batter_bowler_stats_agg
+            WHERE bowler = ?
+            ORDER BY deliveries DESC, opponent
+            LIMIT 12
+            """,
+            (player_name,),
+        ).fetchall()
+        bowler_vs_batter_type = conn.execute(
+            """
+            SELECT COALESCE(batsman_type, 'unknown') AS opponent_type, deliveries, runs, wickets
+            FROM bowler_batter_type_stats_agg
+            WHERE bowler = ?
+            ORDER BY deliveries DESC, opponent_type
+            LIMIT 8
+            """,
+            (player_name,),
+        ).fetchall()
 
-    batter_vs_bowler = conn.execute(
-        """
-        SELECT bowler AS opponent, deliveries, runs, wickets
-        FROM batter_bowler_stats_agg
-        WHERE batter = ?
-        ORDER BY deliveries DESC, opponent
-        LIMIT 12
-        """,
-        (player_name,),
-    ).fetchall()
-
-    bowler_vs_batter = conn.execute(
-        """
-        SELECT batter AS opponent, deliveries, runs, wickets
-        FROM batter_bowler_stats_agg
-        WHERE bowler = ?
-        ORDER BY deliveries DESC, opponent
-        LIMIT 12
-        """,
-        (player_name,),
-    ).fetchall()
-
-    batter_vs_bowler_type = conn.execute(
-        """
-        SELECT COALESCE(bowler_type, 'unknown') AS opponent_type, deliveries, runs, wickets
-        FROM batter_bowler_type_stats_agg
-        WHERE batter = ?
-        ORDER BY deliveries DESC, opponent_type
-        LIMIT 8
-        """,
-        (player_name,),
-    ).fetchall()
-
-    bowler_vs_batter_type = conn.execute(
-        """
-        SELECT COALESCE(batsman_type, 'unknown') AS opponent_type, deliveries, runs, wickets
-        FROM bowler_batter_type_stats_agg
-        WHERE bowler = ?
-        ORDER BY deliveries DESC, opponent_type
-        LIMIT 8
-        """,
-        (player_name,),
-    ).fetchall()
-
-    batting_runs = int(batting["runs"])
-    batting_balls = int(batting["balls"])
-    dismissals = int(batting["outs"])
-    bowling_runs = int(bowling["runs_conceded"])
-    bowling_balls = int(bowling["legal_balls"])
-    bowling_wickets = int(bowling["wickets"])
+    batting_runs = int(batting_agg["runs"])
+    dismissals = int(batting_meta["outs"])
+    bowling_runs = int(bowling_agg["runs_conceded"])
+    bowling_wickets = int(bowling_agg["wickets"])
 
     role = "all_rounder"
     if batting_balls > 0 and bowling_balls == 0:
@@ -297,27 +388,32 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
     for item in bowling_outcomes_rows:
         bowling_outcomes[str(item["outcome_label"])] = int(item["deliveries"])
 
-    photo_map = _player_photo_map()
-    if player_name in photo_map:
-        photo = {"kind": "local", "url": photo_map[player_name], "source": "local_mapping"}
-    else:
-        photo = {"kind": "placeholder", "initials": _initials(player_name)}
+    photo = _photo_payload(player_name)
 
     return {
-        "player": {"name": player_name, "photo": photo, "role": role},
+        "player": {
+            "name": player_name,
+            "photo": photo,
+            "role": role,
+            "role_label": role.replace("_", " ").title(),
+        },
+        "sections": {
+            "has_batting": batting_balls > 0,
+            "has_bowling": bowling_balls > 0,
+        },
         "overview": {
             "matches": int(total_matches["matches"]),
-            "batting_innings": int(batting["innings"]),
-            "bowling_innings": int(bowling["innings"]),
+            "batting_innings": int(batting_meta["innings"]),
+            "bowling_innings": int(bowling_meta["innings"]),
             "batting": {
                 "runs": batting_runs,
                 "balls": batting_balls,
                 "strike_rate": _safe_div(batting_runs * 100.0, batting_balls),
                 "average": _safe_div(float(batting_runs), float(dismissals)),
-                "fours": int(batting["fours"]),
-                "sixes": int(batting["sixes"]),
-                "boundaries": int(batting["fours"]) + int(batting["sixes"]),
-                "dot_ball_rate": _safe_div(int(batting["dots"]) * 100.0, batting_balls),
+                "fours": int(batting_agg["fours"]),
+                "sixes": int(batting_agg["sixes"]),
+                "boundaries": int(batting_agg["fours"]) + int(batting_agg["sixes"]),
+                "dot_ball_rate": _safe_div(int(batting_agg["dots"]) * 100.0, batting_balls),
                 "dismissals": dismissals,
             },
             "bowling": {
@@ -326,7 +422,7 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
                 "wickets": bowling_wickets,
                 "economy": _safe_div(bowling_runs * 6.0, bowling_balls),
                 "strike_rate": _safe_div(float(bowling_balls), float(bowling_wickets)),
-                "dot_ball_rate": _safe_div(int(bowling["dots"]) * 100.0, bowling_balls),
+                "dot_ball_rate": _safe_div(int(bowling_agg["dots"]) * 100.0, bowling_balls),
             },
         },
         "batting_intelligence": {
@@ -337,11 +433,15 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
                     "runs": int(r["runs"]),
                     "balls": int(r["balls"]),
                     "strike_rate": _safe_div(int(r["runs"]) * 100.0, int(r["balls"])),
-                    "boundaries": int(r["boundaries"]),
+                    "fours": int(r["fours"]),
+                    "sixes": int(r["sixes"]),
+                    "boundaries": int(r["fours"]) + int(r["sixes"]),
+                    "dot_ball_rate": _safe_div(int(r["dots"]) * 100.0, int(r["balls"])),
                 }
                 for r in batting_by_season
             ],
-            "by_phase": [
+            "by_phase": sorted(
+                [
                 {
                     "phase": str(r["phase"]),
                     "runs": int(r["runs"]),
@@ -350,7 +450,9 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
                     "dot_ball_rate": _safe_div(int(r["dots"]) * 100.0, int(r["balls"])),
                 }
                 for r in batting_by_phase
-            ],
+                ],
+                key=lambda item: _phase_order(str(item["phase"])),
+            ),
         },
         "bowling_intelligence": {
             "outcome_distribution": bowling_outcomes,
@@ -361,19 +463,26 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
                     "legal_balls": int(r["legal_balls"]),
                     "wickets": int(r["wickets"]),
                     "economy": _safe_div(int(r["runs_conceded"]) * 6.0, int(r["legal_balls"])),
+                    "dot_ball_rate": _safe_div(int(r["dots"]) * 100.0, int(r["legal_balls"])),
+                    "strike_rate": _safe_div(float(int(r["legal_balls"])), float(int(r["wickets"]))),
                 }
                 for r in bowling_by_season
             ],
-            "by_phase": [
+            "by_phase": sorted(
+                [
                 {
                     "phase": str(r["phase"]),
                     "runs_conceded": int(r["runs_conceded"]),
                     "legal_balls": int(r["legal_balls"]),
                     "wickets": int(r["wickets"]),
                     "economy": _safe_div(int(r["runs_conceded"]) * 6.0, int(r["legal_balls"])),
+                    "dot_ball_rate": _safe_div(int(r["dots"]) * 100.0, int(r["legal_balls"])),
+                    "strike_rate": _safe_div(float(int(r["legal_balls"])), float(int(r["wickets"]))),
                 }
                 for r in bowling_by_phase
-            ],
+                ],
+                key=lambda item: _phase_order(str(item["phase"])),
+            ),
         },
         "matchups": {
             "batter_vs_bowler": [
@@ -383,9 +492,10 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
                     "runs": int(r["runs"]),
                     "wickets": int(r["wickets"]),
                     "strike_rate": _safe_div(int(r["runs"]) * 100.0, int(r["deliveries"])),
+                    "evidence_tier": _evidence_tier(int(r["deliveries"])),
                 }
                 for r in batter_vs_bowler
-                if int(r["deliveries"]) >= 8
+                if int(r["deliveries"]) >= 4
             ],
             "bowler_vs_batter": [
                 {
@@ -394,9 +504,10 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
                     "runs_conceded": int(r["runs"]),
                     "wickets": int(r["wickets"]),
                     "economy": _safe_div(int(r["runs"]) * 6.0, int(r["deliveries"])),
+                    "evidence_tier": _evidence_tier(int(r["deliveries"])),
                 }
                 for r in bowler_vs_batter
-                if int(r["deliveries"]) >= 8
+                if int(r["deliveries"]) >= 4
             ],
             "batter_vs_bowler_type": [
                 {
@@ -405,9 +516,10 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
                     "runs": int(r["runs"]),
                     "wickets": int(r["wickets"]),
                     "strike_rate": _safe_div(int(r["runs"]) * 100.0, int(r["deliveries"])),
+                    "evidence_tier": _evidence_tier(int(r["deliveries"])),
                 }
                 for r in batter_vs_bowler_type
-                if int(r["deliveries"]) >= 12
+                if int(r["deliveries"]) >= 4
             ],
             "bowler_vs_batter_type": [
                 {
@@ -416,9 +528,10 @@ def get_player_intelligence(conn: sqlite3.Connection, player_name: str) -> dict[
                     "runs_conceded": int(r["runs"]),
                     "wickets": int(r["wickets"]),
                     "economy": _safe_div(int(r["runs"]) * 6.0, int(r["deliveries"])),
+                    "evidence_tier": _evidence_tier(int(r["deliveries"])),
                 }
                 for r in bowler_vs_batter_type
-                if int(r["deliveries"]) >= 12
+                if int(r["deliveries"]) >= 4
             ],
         },
     }

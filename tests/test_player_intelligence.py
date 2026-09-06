@@ -36,6 +36,13 @@ class PlayerIntelligenceTests(unittest.TestCase):
         self.assertGreaterEqual(len(players), 1)
         self.assertIn("photo", players[0])
         self.assertIn(players[0]["photo"]["kind"], {"local", "placeholder"})
+        if players[0]["photo"]["kind"] == "placeholder":
+            self.assertIn("seed", players[0]["photo"])
+
+    def test_list_players_normalized_query(self) -> None:
+        players = list_players(self.conn, query="player a", limit=10)
+        names = [item["player_name"] for item in players]
+        self.assertIn("PlayerA", names)
 
     def test_player_intelligence_returns_overview_and_matchups(self) -> None:
         profile = get_player_intelligence(self.conn, "PlayerA")
@@ -45,6 +52,43 @@ class PlayerIntelligenceTests(unittest.TestCase):
         self.assertIn("bowling_intelligence", profile)
         self.assertIn("matchups", profile)
         self.assertGreaterEqual(profile["overview"]["batting"]["runs"], 0)
+        self.assertTrue(profile["sections"]["has_batting"])
+
+    def test_player_profile_calculations(self) -> None:
+        profile = get_player_intelligence(self.conn, "PlayerA")
+        batting = profile["overview"]["batting"]
+
+        self.assertEqual(batting["runs"], 8)
+        self.assertEqual(batting["balls"], 5)
+        self.assertEqual(batting["fours"], 1)
+        self.assertEqual(batting["sixes"], 0)
+        self.assertEqual(batting["dismissals"], 0)
+        self.assertEqual(batting["strike_rate"], 160.0)
+
+    def test_player_season_and_phase_metrics(self) -> None:
+        profile = get_player_intelligence(self.conn, "PlayerA")
+        batting_seasons = profile["batting_intelligence"]["by_season"]
+        bowling_seasons = profile["bowling_intelligence"]["by_season"]
+
+        self.assertEqual(len(batting_seasons), 2)
+        self.assertEqual([item["season_id"] for item in batting_seasons], [2020, 2021])
+        self.assertEqual(len(profile["batting_intelligence"]["by_phase"]), 1)
+        self.assertEqual(profile["batting_intelligence"]["by_phase"][0]["phase"], "powerplay")
+        self.assertEqual(len(bowling_seasons), 0)
+
+    def test_matchup_metrics_and_evidence_tier(self) -> None:
+        profile = get_player_intelligence(self.conn, "PlayerA")
+        matchups = profile["matchups"]["batter_vs_bowler"]
+        self.assertGreaterEqual(len(matchups), 1)
+        first = matchups[0]
+        self.assertEqual(first["opponent"], "BowlerX")
+        self.assertEqual(first["sample_size"], 6)
+        self.assertIn(first["evidence_tier"], {"small", "low", "medium", "high"})
+
+    def test_outcome_distribution_shape(self) -> None:
+        profile = get_player_intelligence(self.conn, "PlayerA")
+        outcomes = profile["batting_intelligence"]["outcome_distribution"]
+        self.assertEqual(set(outcomes.keys()), {"0", "1", "2", "3+", "4", "6", "wicket"})
 
     def test_player_not_found(self) -> None:
         with self.assertRaises(ValueError):

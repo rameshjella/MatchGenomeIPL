@@ -1,1 +1,32 @@
-{}
+{
+  "TM Head": {
+	"url": "/assets/players/tm_head.svg",
+	"source": "matchgenome_local_avatar",
+	"license": "repository_generated"
+  },
+  "V Kohli": {
+	"url": "/assets/players/v_kohli.svg",
+	"source": "matchgenome_local_avatar",
+	"license": "repository_generated"
+  },
+  "RG Sharma": {
+	"url": "/assets/players/rg_sharma.svg",
+	"source": "matchgenome_local_avatar",
+	"license": "repository_generated"
+  },
+  "JJ Bumrah": {
+	"url": "/assets/players/jj_bumrah.svg",
+	"source": "matchgenome_local_avatar",
+	"license": "repository_generated"
+  },
+  "MS Dhoni": {
+	"url": "/assets/players/ms_dhoni.svg",
+	"source": "matchgenome_local_avatar",
+	"license": "repository_generated"
+  },
+  "RR Pant": {
+	"url": "/assets/players/r_pant.svg",
+	"source": "matchgenome_local_avatar",
+	"license": "repository_generated"
+  }
+}

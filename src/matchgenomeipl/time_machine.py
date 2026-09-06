@@ -428,6 +428,18 @@ class TimeMachineService:
     def list_players(self, query: str = "", limit: int = 50) -> list[dict[str, Any]]:
         return list_players(self.conn, query=query, limit=limit)
 
-    def get_player(self, player_name: str) -> dict[str, Any]:
-        return get_player_intelligence(self.conn, player_name)
+    def get_player(self, player_name: str, session_id: str | None = None) -> dict[str, Any]:
+        payload = get_player_intelligence(self.conn, player_name)
+        if session_id is not None:
+            session = self.get_replay_session(session_id)
+            payload["entry_points"] = {
+                "return_to_replay": {
+                    "session_id": session.session_id,
+                    "season_id": session.season_id,
+                    "match_id": session.match_id,
+                    "innings": session.innings,
+                    "status": session.status.value,
+                }
+            }
+        return payload
 

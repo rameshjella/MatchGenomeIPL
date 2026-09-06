@@ -8,30 +8,38 @@
   </head>
   <body>
     <main class="app" aria-live="polite">
-      <header class="app-header">
-        <h1>MatchGenome Time Machine</h1>
-        <p>Travel through IPL history and see what MatchGenome predicted before each ball.</p>
-      </header>
-
-      <section class="selector card" aria-label="Match selection">
-        <h2>Select Replay</h2>
-        <div class="selector-grid">
-          <label>Season
-            <select id="seasonSelect"></select>
-          </label>
-          <label>Match
-            <select id="matchSelect"></select>
-          </label>
-          <label>Innings
-            <select id="inningsSelect"></select>
-          </label>
+      <header class="app-header card">
+        <div>
+          <p class="eyebrow">MatchGenomeIPL</p>
+          <h1>Cricket Intelligence Studio</h1>
+          <p>Move between Time Machine predictions and Player Intelligence without leaving match context.</p>
         </div>
-        <button id="startReplayBtn" class="primary">Start Time Machine</button>
-      </section>
+        <nav class="mode-nav" aria-label="Product navigation">
+          <button id="goTimeMachineBtn" class="primary" type="button">Time Machine</button>
+          <button id="goPlayerIntelligenceBtn" type="button">Player Intelligence</button>
+        </nav>
+      </header>
 
       <section id="statusBanner" class="status card" hidden></section>
 
-      <section id="replayPanel" class="replay" hidden>
+      <section id="timeMachineView" class="view-stack">
+        <section class="selector card" aria-label="Match selection">
+          <h2>Select Replay</h2>
+          <div class="selector-grid">
+            <label>Season
+              <select id="seasonSelect"></select>
+            </label>
+            <label>Match
+              <select id="matchSelect"></select>
+            </label>
+            <label>Innings
+              <select id="inningsSelect"></select>
+            </label>
+          </div>
+          <button id="startReplayBtn" class="primary">Start Time Machine</button>
+        </section>
+
+        <section id="replayPanel" class="replay" hidden>
         <section class="card match-header" aria-label="Match header">
           <h2 id="matchTitle">Replay</h2>
           <div class="header-grid">
@@ -91,27 +99,47 @@
           <h3>What Happened</h3>
           <div id="actualBlock" class="actual-block">Reveal the ball to see actual outcome.</div>
         </section>
+        </section>
+      </section>
 
-        <section class="card player-panel" aria-label="Player intelligence">
+      <section id="playerView" class="view-stack" hidden>
+        <section class="card" aria-label="Player search">
           <div class="player-panel-header">
-            <h3>Player Intelligence</h3>
+            <h2>Player Intelligence</h2>
+            <button id="backToReplayBtn" type="button">Return to Time Machine</button>
+          </div>
+          <p class="muted">Search any player or jump directly from replay participants.</p>
+          <div class="search-row">
+            <input id="playerSearchInput" type="search" placeholder="Search players (e.g. Head, Kohli, Bumrah)" />
+            <button id="playerSearchBtn" type="button">Search</button>
+          </div>
+          <div id="playerSearchResults" class="search-results" role="listbox" aria-label="Player search results"></div>
+        </section>
+
+        <section class="card player-panel" aria-label="Player intelligence profile">
+          <div class="player-panel-header">
+            <h3>Player Profile</h3>
             <button id="closePlayerBtn" type="button">Close</button>
           </div>
-          <div id="playerPrompt">Click a batter, non-striker, or bowler name to open intelligence.</div>
+          <div id="playerPrompt">Click a batter, non-striker, or bowler in Time Machine, or use search above.</div>
           <div id="playerPanel" hidden>
-            <div class="player-hero">
+            <div class="player-hero premium">
               <div id="playerAvatar" class="avatar" aria-hidden="true">?</div>
-              <div>
+              <div class="player-headline">
                 <h4 id="playerName">-</h4>
                 <p id="playerRole" class="muted">-</p>
+                <div class="context-links">
+                  <button id="exploreReplayBtn" type="button">Explore in Time Machine</button>
+                  <span id="playerContextText" class="muted">No active replay context.</span>
+                </div>
               </div>
             </div>
             <div id="playerOverview" class="stats-grid"></div>
-            <h4>Batting Intelligence</h4>
+            <h4 id="battingTitle">Batting Intelligence</h4>
             <div id="playerBatting"></div>
-            <h4>Bowling Intelligence</h4>
+            <h4 id="bowlingTitle">Bowling Intelligence</h4>
             <div id="playerBowling"></div>
-            <h4>Context Matchups</h4>
+            <h4>Matchup Intelligence</h4>
             <div id="playerMatchups"></div>
           </div>
         </section>
