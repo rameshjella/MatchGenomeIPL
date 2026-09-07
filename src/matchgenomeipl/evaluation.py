@@ -58,8 +58,14 @@ def evaluate_contextual_candidates(
 
     candidates = {
         "baseline": MetricAccumulator(),
+        "innings_state_context": MetricAccumulator(),
         "player_history_context": MetricAccumulator(),
+        "bowler_history_context": MetricAccumulator(),
         "matchup_context": MetricAccumulator(),
+        "team_opposition_context": MetricAccumulator(),
+        "venue_context": MetricAccumulator(),
+        "recent_context": MetricAccumulator(),
+        "similar_situations_context": MetricAccumulator(),
         "combined_context": MetricAccumulator(),
     }
     phase_metrics = {
@@ -99,8 +105,46 @@ def evaluate_contextual_candidates(
 
         payloads = {
             "baseline": baseline["outcome_probabilities"],
+            "innings_state_context": _blend_candidate(
+                [
+                    (baseline["outcome_probabilities"], 0.82),
+                    (cf["phase_history"]["outcome_probabilities"], 0.18),
+                ]
+            ),
             "player_history_context": player_history,
+            "bowler_history_context": _blend_candidate(
+                [
+                    (baseline["outcome_probabilities"], 0.45),
+                    (cf["bowler_history"]["outcomes"]["outcome_probabilities"], 0.35),
+                    (cf["matchups"]["bowler_vs_batter_type"]["outcome_probabilities"], 0.20),
+                ]
+            ),
             "matchup_context": matchup_context,
+            "team_opposition_context": _blend_candidate(
+                [
+                    (baseline["outcome_probabilities"], 0.65),
+                    (cf["team_context"]["batting_team_outcomes"]["outcome_probabilities"], 0.2),
+                    (cf["team_context"]["bowling_team_outcomes"]["outcome_probabilities"], 0.15),
+                ]
+            ),
+            "venue_context": _blend_candidate(
+                [
+                    (baseline["outcome_probabilities"], 0.75),
+                    (cf["venue_context"]["outcomes"]["outcome_probabilities"], 0.25),
+                ]
+            ),
+            "recent_context": _blend_candidate(
+                [
+                    (baseline["outcome_probabilities"], 0.75),
+                    (cf["recent_deliveries"]["distribution"]["outcome_probabilities"], 0.25),
+                ]
+            ),
+            "similar_situations_context": _blend_candidate(
+                [
+                    (baseline["outcome_probabilities"], 0.7),
+                    (cf["similar_situations"]["outcomes"]["outcome_probabilities"], 0.3),
+                ]
+            ),
             "combined_context": combined["outcome_probabilities"],
         }
         actual = classify_delivery_outcome(context.target)
@@ -181,6 +225,48 @@ class MetricAccumulator:
             "top1_accuracy": round(self.top1_hits / self.count, 6),
             "top3_coverage": round(self.top3_hits / self.count, 6),
         }
+
+
+def _sample_size_bucket(sample_size: int) -> str:
+    if sample_size < 30:
+        return "0-29"
+    if sample_size < 100:
+        return "30-99"
+    if sample_size < 300:
+        return "100-299"
+    if sample_size < 1000:
+        return "300-999"
+    return "1000+"
+
+
+def _calibration_from_predictions(rows: list[tuple[float, bool]]) -> list[dict[str, Any]]:
+    bins = [
+        {"name": "0.0-0.2", "min": 0.0, "max": 0.2, "count": 0, "confidence_sum": 0.0, "correct_sum": 0.0},
+        {"name": "0.2-0.4", "min": 0.2, "max": 0.4, "count": 0, "confidence_sum": 0.0, "correct_sum": 0.0},
+        {"name": "0.4-0.6", "min": 0.4, "max": 0.6, "count": 0, "confidence_sum": 0.0, "correct_sum": 0.0},
+        {"name": "0.6-0.8", "min": 0.6, "max": 0.8, "count": 0, "confidence_sum": 0.0, "correct_sum": 0.0},
+        {"name": "0.8-1.0", "min": 0.8, "max": 1.000001, "count": 0, "confidence_sum": 0.0, "correct_sum": 0.0},
+    ]
+    for confidence, is_correct in rows:
+        for bucket in bins:
+            if bucket["min"] <= confidence < bucket["max"]:
+                bucket["count"] += 1
+                bucket["confidence_sum"] += confidence
+                bucket["correct_sum"] += 1.0 if is_correct else 0.0
+                break
+
+    out: list[dict[str, Any]] = []
+    for bucket in bins:
+        count = int(bucket["count"])
+        out.append(
+            {
+                "bin": bucket["name"],
+                "count": count,
+                "mean_confidence": round((bucket["confidence_sum"] / count), 6) if count else 0.0,
+                "empirical_accuracy": round((bucket["correct_sum"] / count), 6) if count else 0.0,
+            }
+        )
+    return out
 
 
 @dataclass
@@ -546,6 +632,7 @@ def _online_trace(
     trace: list[dict[str, Any]] = []
 
     for row in eval_rows:
+        row_started = time.perf_counter()
         row_phase = innings_phase(int(row["legal_balls_before"]))
         actual_outcome = classify_delivery_outcome(row)
         predictions = _predict_all_models(history, row, row_phase)
@@ -572,6 +659,13 @@ def _online_trace(
                 "phase": row_phase,
                 "actual_outcome": actual_outcome,
                 "base_predictions": predictions,
+                "latency_ms": round((time.perf_counter() - row_started) * 1000.0, 3),
+                "sample_sizes": {
+                    model_name: int(payload.get("evidence_sample_size", 0)) for model_name, payload in predictions.items()
+                },
+                "top_confidence": {
+                    model_name: float(max(payload["outcome_probabilities"].values())) for model_name, payload in predictions.items()
+                },
             }
         )
 
@@ -840,6 +934,48 @@ def evaluate_temporal_models(
                 "probabilities": decayed_probs,
             }
 
+    calibration_rows: dict[str, list[tuple[float, bool]]] = {
+        "global": [],
+        "phase": [],
+        "matchgenome_hierarchical": [],
+        MIXTURE_MODEL: [],
+        TIME_DECAYED_MIXTURE_MODEL: [],
+    }
+    sample_bucket_counts: dict[str, Counter[str]] = {
+        "global": Counter(),
+        "phase": Counter(),
+        "matchgenome_hierarchical": Counter(),
+        MIXTURE_MODEL: Counter(),
+        TIME_DECAYED_MIXTURE_MODEL: Counter(),
+    }
+
+    for item in trace:
+        actual = item["actual_outcome"]
+        for model_name in ("global", "phase", "matchgenome_hierarchical"):
+            payload = item["base_predictions"][model_name]
+            probs = payload["outcome_probabilities"]
+            top = payload["predicted_top_outcome"]
+            top_conf = float(probs[top])
+            calibration_rows[model_name].append((top_conf, top == actual))
+            sample_bucket_counts[model_name][_sample_size_bucket(int(payload.get("evidence_sample_size", 0)))] += 1
+
+    for payload in per_delivery_predictions:
+        actual = payload["actual_outcome"]
+        for model_name in (MIXTURE_MODEL, TIME_DECAYED_MIXTURE_MODEL):
+            probs = payload["predictions"][model_name]["probabilities"]
+            top = payload["predictions"][model_name]["top"]
+            top_conf = float(probs[top])
+            calibration_rows[model_name].append((top_conf, top == actual))
+            sample_bucket_counts[model_name][_sample_size_bucket(int(payload["predictions"][model_name].get("sample_size", 0)))] += 1
+
+    latency_rows_ms = [float(item["latency_ms"]) for item in trace]
+    latency_summary = {
+        "count": len(latency_rows_ms),
+        "avg_ms": round(sum(latency_rows_ms) / len(latency_rows_ms), 3) if latency_rows_ms else 0.0,
+        "p95_ms": round(sorted(latency_rows_ms)[int(0.95 * (len(latency_rows_ms) - 1))], 3) if latency_rows_ms else 0.0,
+        "max_ms": round(max(latency_rows_ms), 3) if latency_rows_ms else 0.0,
+    }
+
     phase_overall = model_acc["phase"].as_metrics()
     hier_overall = model_acc["matchgenome_hierarchical"].as_metrics()
     mix_overall = mixture_acc.as_metrics()
@@ -872,6 +1008,8 @@ def evaluate_temporal_models(
                 "overall": acc.as_metrics(),
                 "phase_breakdown": {phase: phase_acc[model_name][phase].as_metrics() for phase in ("powerplay", "middle", "death")},
                 "outcome_breakdown": {label: outcome_acc[model_name][label].as_metrics() for label in OUTCOME_LABELS},
+                "calibration": _calibration_from_predictions(calibration_rows[model_name]),
+                "sample_size_buckets": dict(sorted(sample_bucket_counts[model_name].items())),
             }
             for model_name, acc in model_acc.items()
         },
@@ -912,14 +1050,19 @@ def evaluate_temporal_models(
                 "overall": mix_overall,
                 "phase_breakdown": {phase: mixture_phase_acc[phase].as_metrics() for phase in ("powerplay", "middle", "death")},
                 "outcome_breakdown": {label: mixture_outcome_acc[label].as_metrics() for label in OUTCOME_LABELS},
+                "calibration": _calibration_from_predictions(calibration_rows[MIXTURE_MODEL]),
+                "sample_size_buckets": dict(sorted(sample_bucket_counts[MIXTURE_MODEL].items())),
             },
             TIME_DECAYED_MIXTURE_MODEL: {
                 "version": "baseline_time_decayed_mixture_v1",
                 "overall": time_decayed_mix_overall,
                 "phase_breakdown": {phase: time_decayed_mixture_phase_acc[phase].as_metrics() for phase in ("powerplay", "middle", "death")},
                 "outcome_breakdown": {label: time_decayed_mixture_outcome_acc[label].as_metrics() for label in OUTCOME_LABELS},
+                "calibration": _calibration_from_predictions(calibration_rows[TIME_DECAYED_MIXTURE_MODEL]),
+                "sample_size_buckets": dict(sorted(sample_bucket_counts[TIME_DECAYED_MIXTURE_MODEL].items())),
             },
         },
+        "prediction_latency": latency_summary,
         "improvement_vs_phase": {
             "log_loss": _delta(mix_overall["log_loss"], phase_overall["log_loss"]),
             "brier_score": _delta(mix_overall["brier_score"], phase_overall["brier_score"]),

@@ -12,7 +12,7 @@ if str(SRC) not in sys.path:
 
 from matchgenomeipl.chronology import EvaluationWindow, KnowledgeCutoff, chronology_diagnostics
 from matchgenomeipl.database import connect_db, database_runtime_status
-from matchgenomeipl.evaluation import MixtureTuningConfig, evaluate_temporal_models
+from matchgenomeipl.evaluation import MixtureTuningConfig, evaluate_contextual_candidates, evaluate_temporal_models
 from matchgenomeipl.ingestion import ensure_dataset_ready
 
 
@@ -24,6 +24,8 @@ def summarize_model_block(block: dict) -> dict:
         "brier_score": overall["brier_score"],
         "top1_accuracy": overall["top1_accuracy"],
         "top3_coverage": overall["top3_coverage"],
+        "calibration": block.get("calibration", []),
+        "sample_size_buckets": block.get("sample_size_buckets", {}),
     }
 
 
@@ -44,6 +46,31 @@ def run_experiment(conn, cutoff_season: int, eval_season: int, max_deliveries: i
     )
     elapsed = round(time.perf_counter() - started, 3)
 
+    contextual_started = time.perf_counter()
+    contextual = evaluate_contextual_candidates(
+        conn,
+        knowledge_cutoff=KnowledgeCutoff(cutoff_season),
+        evaluation_window=EvaluationWindow(eval_season),
+        max_deliveries=max_deliveries,
+    )
+    contextual_elapsed = round(time.perf_counter() - contextual_started, 3)
+
+    contextual_combined = contextual.get("candidates", {}).get("combined_context", {}).get("overall", {})
+    model_versions = {
+        "baseline_hierarchical_v1": summarize_model_block(result["models"]["matchgenome_hierarchical"]),
+        "calibrated_mixture": summarize_model_block(result["models_additional"]["calibrated_mixture"]),
+        "time_decayed_mixture": summarize_model_block(result["models_additional"]["time_decayed_mixture"]),
+        "contextual_hybrid_v1": {
+            "deliveries": contextual_combined.get("deliveries", 0),
+            "log_loss": contextual_combined.get("log_loss", 0.0),
+            "brier_score": contextual_combined.get("brier_score", 0.0),
+            "top1_accuracy": contextual_combined.get("top1_accuracy", 0.0),
+            "top3_coverage": contextual_combined.get("top3_coverage", 0.0),
+            "calibration": [],
+            "sample_size_buckets": {},
+        },
+    }
+
     return {
         "name": result["evaluation_name"],
         "knowledge_cutoff": result["knowledge_cutoff"],
@@ -51,6 +78,8 @@ def run_experiment(conn, cutoff_season: int, eval_season: int, max_deliveries: i
         "chronology_method": result["chronology_method"],
         "evaluated_deliveries": result["evaluated_deliveries"],
         "runtime_seconds": elapsed,
+        "prediction_latency": result.get("prediction_latency", {}),
+        "model_versions": model_versions,
         "models": {
             "global": summarize_model_block(result["models"]["global"]),
             "phase": summarize_model_block(result["models"]["phase"]),
@@ -71,6 +100,13 @@ def run_experiment(conn, cutoff_season: int, eval_season: int, max_deliveries: i
         "improvement_vs_hierarchical": result["improvement_vs_hierarchical"],
         "time_decayed_vs_existing_mixture": result["time_decayed_vs_existing_mixture"],
         "hierarchical_evidence_breakdown": result["hierarchical_evidence_breakdown"],
+        "feature_family_candidates": {
+            name: block["overall"] for name, block in contextual.get("candidates", {}).items()
+        },
+        "feature_family_phase_breakdown": {
+            name: block.get("phase_breakdown", {}) for name, block in contextual.get("candidates", {}).items()
+        },
+        "feature_family_runtime_seconds": contextual_elapsed,
     }
 
 
@@ -93,10 +129,21 @@ def main() -> None:
         "ingestion": ingest_stats.__dict__,
         "runtime_status": runtime,
         "chronology": chronology,
+        "baseline_freeze": {
+            "control_models": ["baseline_hierarchical_v1", "calibrated_mixture", "time_decayed_mixture", "contextual_hybrid_v1"],
+            "selection_rule": "Prefer lower log_loss and brier; require calibration and latency sanity; keep simpler model when equivalent.",
+            "generated_at_unix": int(time.time()),
+        },
         "experiments": [exp_2024_2025, exp_2023_2024],
     }
 
+    artifact_dir = ROOT / "artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_dir / "temporal_eval_current.json"
+    artifact_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+
     print(json.dumps(report, indent=2, sort_keys=True))
+    print(f"Saved artifact: {artifact_path}")
 
 
 if __name__ == "__main__":

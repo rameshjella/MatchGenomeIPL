@@ -93,11 +93,18 @@ class VisualQaRunner:
         )
         self._save("03_ask_result")
 
+        ask_input.clear()
+        ask_input.send_keys("What was the humidity in that match?")
+        self.driver.find_element(By.ID, "askSubmitBtn").click()
+        self.wait.until(lambda d: "Unsupported" in d.find_element(By.ID, "askResults").text or "could not map" in d.find_element(By.ID, "askResults").text)
+        self._save("04_ask_empty_or_error")
+
         tm_btn = self.driver.find_element(By.ID, "goTimeMachineBtn")
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", tm_btn)
         self.driver.execute_script("arguments[0].click();", tm_btn)
         self.wait.until(lambda d: not d.find_element(By.ID, "timeMachineView").get_attribute("hidden"))
         self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#matchCards .match-card")) > 0)
+        self._save("05_time_machine_initial")
 
         cards = self.driver.find_elements(By.CSS_SELECTOR, "#matchCards .match-card")
         first_teams_text = cards[0].find_element(By.CSS_SELECTOR, ".match-teams").text.strip()
@@ -109,20 +116,20 @@ class VisualQaRunner:
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", cards[0])
         self.driver.execute_script("arguments[0].click();", cards[0])
         self.wait.until(lambda d: d.find_element(By.ID, "inningsSelect").get_attribute("value") is not None)
-        self._save("04_match_discovery")
+        self._save("06_match_selected")
         self._check_overflow("discovery")
 
         start_btn = self.driver.find_element(By.ID, "startReplayBtn")
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", start_btn)
         self.driver.execute_script("arguments[0].click();", start_btn)
         self.wait.until(EC.visibility_of_element_located((By.ID, "replayPanel")))
-        self._save("05_match_workspace")
+        self._save("07_match_workspace")
 
         predict_btn = self.driver.find_element(By.ID, "predictBtn")
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", predict_btn)
         self.driver.execute_script("arguments[0].click();", predict_btn)
         self.wait.until(lambda d: d.find_element(By.ID, "predictedTop").text.strip() not in {"", "-"})
-        self._save("06_before_ball_prediction")
+        self._save("08_before_ball_prediction")
         self._check_overflow("prediction")
 
         actual_before = self._text("#actualBlock")
@@ -130,7 +137,7 @@ class VisualQaRunner:
 
         self.driver.find_element(By.ID, "tabEvidenceBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "panelEvidence")))
-        self._save("09_evidence")
+        self._save("10_evidence")
         self._check_overflow("evidence")
 
         self.driver.find_element(By.ID, "tabPredictionBtn").click()
@@ -139,13 +146,25 @@ class VisualQaRunner:
         self.driver.execute_script("arguments[0].click();", reveal_btn)
         self.wait.until(lambda d: "The Ball Happened" in d.find_element(By.ID, "actualBlock").text)
         self.results["checks"]["replay_accuracy_semantics"] = self._text("#accuracyValue")
-        self._save("07_reveal")
+        self._save("09_after_reveal")
         self._check_overflow("reveal")
 
         self.driver.find_element(By.ID, "tabBallByBallBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "panelBallByBall")))
-        self._save("08_ball_by_ball")
+        self._save("11_ball_by_ball")
         self._check_overflow("ball_by_ball")
+
+        # Build a long-content state for scroll and panel containment checks.
+        self.driver.find_element(By.ID, "tabPredictionBtn").click()
+        for _ in range(20):
+            self.driver.find_element(By.ID, "predictBtn").click()
+            self.wait.until(lambda d: d.find_element(By.ID, "revealBtn").is_enabled())
+            self.driver.find_element(By.ID, "revealBtn").click()
+            self.wait.until(lambda d: "The Ball Happened" in d.find_element(By.ID, "actualBlock").text)
+            if "Replay completed" in self.driver.find_element(By.ID, "statusBanner").text:
+                break
+        self.driver.find_element(By.ID, "tabBallByBallBtn").click()
+        self._save("12_long_content_state")
 
         self.driver.find_element(By.ID, "goPlayerIntelligenceBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "playerView")))
@@ -155,12 +174,12 @@ class VisualQaRunner:
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_btn)
         self.driver.execute_script("arguments[0].click();", search_btn)
         self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")) > 0)
-        self._save("10_player_search")
+        self._save("13_player_search")
 
         first_result = self.driver.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")[0]
         first_result.click()
         self.wait.until(lambda d: d.find_element(By.ID, "playerPanel").is_displayed())
-        self._save("11_player_overview")
+        self._save("14_player_overview")
         self._check_overflow("player_overview")
 
         for tab_id, shot in [
@@ -212,9 +231,11 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     viewports = [
-        (1600, 1000, "desktop"),
-        (1024, 768, "tablet"),
-        (390, 844, "mobile"),
+        (1440, 900, "desktop_1440x900"),
+        (1280, 800, "desktop_1280x800"),
+        (1024, 768, "tablet_1024x768"),
+        (768, 1024, "tablet_768x1024"),
+        (390, 844, "mobile_390x844"),
     ]
 
     report: dict[str, object] = {"runs": []}

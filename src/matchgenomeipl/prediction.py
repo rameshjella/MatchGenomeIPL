@@ -175,6 +175,37 @@ def _bucket_wickets(wickets_before: int) -> str:
     return "6+"
 
 
+def _bucket_over_window(legal_balls_before: int) -> str:
+    over_index = max(0, legal_balls_before // 6)
+    low = (over_index // 3) * 3
+    high = low + 2
+    return f"{low}-{high}"
+
+
+def _compute_rr(score: int, legal_balls: int) -> float:
+    return round((score / (legal_balls / 6.0)), 2) if legal_balls else 0.0
+
+
+def _sample_reliability(sample_size: int) -> str:
+    if sample_size >= 1200:
+        return "high"
+    if sample_size >= 250:
+        return "medium"
+    if sample_size >= 40:
+        return "low"
+    return "small"
+
+
+def _venue_evidence_tier(sample_size: int) -> str:
+    if sample_size >= 2500:
+        return "strong"
+    if sample_size >= 600:
+        return "moderate"
+    if sample_size >= 120:
+        return "weak"
+    return "fallback"
+
+
 def _fetch_outcome_counts(
     conn: sqlite3.Connection,
     timeline: str,
@@ -403,16 +434,146 @@ def _collect_contextual_features(conn: sqlite3.Connection, target: sqlite3.Row, 
             remaining_balls = max(1, 120 - legal_balls_before)
             required_run_rate = round((remaining_runs * 6.0) / remaining_balls, 2)
 
+    recent_window = conn.execute(
+        """
+        SELECT
+            COALESCE(SUM(total_runs), 0) AS runs,
+            COALESCE(SUM(is_wicket), 0) AS wickets,
+            COALESCE(SUM(legal_ball), 0) AS legal_balls,
+            COALESCE(SUM(CASE WHEN total_runs IN (4, 6) THEN 1 ELSE 0 END), 0) AS boundaries,
+            COALESCE(SUM(CASE WHEN total_runs = 0 AND is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS dots
+        FROM (
+            SELECT total_runs, is_wicket, legal_ball, is_wide_ball
+            FROM deliveries
+            WHERE season_id = ? AND match_id = ? AND innings = ?
+              AND (over_number < ? OR (over_number = ? AND ball_number < ?))
+            ORDER BY over_number DESC, ball_number DESC, source_row_number DESC
+            LIMIT 12
+        ) recent
+        """,
+        (season_id, match_id, innings, over_number, over_number, ball_number),
+    ).fetchone()
+
+    partnership = conn.execute(
+        """
+        WITH prior AS (
+            SELECT
+                total_runs,
+                legal_ball,
+                CASE WHEN total_runs IN (4, 6) THEN 1 ELSE 0 END AS boundary,
+                COALESCE(
+                    SUM(is_wicket) OVER (
+                        PARTITION BY season_id, match_id, innings
+                        ORDER BY over_number, ball_number, source_row_number
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    ),
+                    0
+                ) AS wickets_before_delivery
+            FROM deliveries
+            WHERE season_id = ? AND match_id = ? AND innings = ?
+              AND (over_number < ? OR (over_number = ? AND ball_number < ?))
+        )
+        SELECT
+            COALESCE(SUM(total_runs), 0) AS runs,
+            COALESCE(SUM(legal_ball), 0) AS balls,
+            COALESCE(SUM(boundary), 0) AS boundaries,
+            COUNT(*) AS deliveries
+        FROM prior
+        WHERE wickets_before_delivery = ?
+        """,
+        (season_id, match_id, innings, over_number, over_number, ball_number, wickets_before),
+    ).fetchone()
+
     batter_counts = _fetch_outcome_counts(conn, timeline, " AND batter = ?", (batter,))
     bowler_counts = _fetch_outcome_counts(conn, timeline, " AND bowler = ?", (bowler,))
     matchup_counts = _fetch_outcome_counts(conn, timeline, " AND batter = ? AND bowler = ?", (batter, bowler))
     phase_counts = _fetch_outcome_counts(conn, timeline, " AND " + _phase_over_clause(phase))
-    similar_counts = _fetch_outcome_counts(
+    batter_vs_type_counts = _fetch_outcome_counts(
         conn,
         timeline,
-        " AND batsman_type = ? AND bowler_type = ? AND " + _phase_over_clause(phase),
-        (target["batsman_type"], target["bowler_type"]),
+        " AND batter = ? AND bowler_type = ?",
+        (batter, target["bowler_type"]),
     )
+    bowler_vs_batter_type_counts = _fetch_outcome_counts(
+        conn,
+        timeline,
+        " AND bowler = ? AND batsman_type = ?",
+        (bowler, target["batsman_type"]),
+    )
+    team_batting_counts = _fetch_outcome_counts(conn, timeline, " AND team_batting = ?", (target["team_batting"],))
+    team_bowling_counts = _fetch_outcome_counts(conn, timeline, " AND team_bowling = ?", (target["team_bowling"],))
+
+    over_bucket = _bucket_over_window(legal_balls_before)
+    over_low, over_high = [int(part) for part in over_bucket.split("-")]
+    similarity_strategies = [
+        {
+            "name": "strict_match_state",
+            "where": (
+                " AND innings = ? AND "
+                + _phase_over_clause(phase)
+                + " AND batsman_type = ? AND bowler_type = ?"
+                + " AND team_batting = ? AND team_bowling = ?"
+                + " AND over_number BETWEEN ? AND ?"
+            ),
+            "params": (
+                innings,
+                target["batsman_type"],
+                target["bowler_type"],
+                target["team_batting"],
+                target["team_bowling"],
+                over_low,
+                over_high,
+            ),
+            "min_samples": 120,
+        },
+        {
+            "name": "state_type_phase",
+            "where": (
+                " AND innings = ? AND "
+                + _phase_over_clause(phase)
+                + " AND batsman_type = ? AND bowler_type = ? AND over_number BETWEEN ? AND ?"
+            ),
+            "params": (innings, target["batsman_type"], target["bowler_type"], over_low, over_high),
+            "min_samples": 220,
+        },
+        {
+            "name": "type_phase_fallback",
+            "where": " AND " + _phase_over_clause(phase) + " AND batsman_type = ? AND bowler_type = ?",
+            "params": (target["batsman_type"], target["bowler_type"]),
+            "min_samples": 1,
+        },
+    ]
+    similar_counts = Counter()
+    similarity_level = "type_phase_fallback"
+    for strategy in similarity_strategies:
+        trial = _fetch_outcome_counts(conn, timeline, strategy["where"], strategy["params"])
+        if sum(trial.values()) >= int(strategy["min_samples"]):
+            similar_counts = trial
+            similarity_level = str(strategy["name"])
+            break
+        if sum(trial.values()) > sum(similar_counts.values()):
+            similar_counts = trial
+            similarity_level = str(strategy["name"])
+
+    venue_row = conn.execute(
+        """
+        SELECT venue
+        FROM match_metadata
+        WHERE match_id = ?
+        LIMIT 1
+        """,
+        (match_id,),
+    ).fetchone()
+    venue = str(venue_row["venue"]).strip() if venue_row and venue_row["venue"] else None
+    if venue:
+        venue_counts = _fetch_outcome_counts(
+            conn,
+            timeline,
+            " AND match_id IN (SELECT match_id FROM match_metadata WHERE venue = ?)",
+            (venue,),
+        )
+    else:
+        venue_counts = Counter()
     recent_outcomes = _fetch_recent_outcomes(conn, season_id, match_id, innings, over_number, ball_number, limit=6)
     recent_counter = Counter(recent_outcomes)
 
@@ -421,6 +582,15 @@ def _collect_contextual_features(conn: sqlite3.Connection, target: sqlite3.Row, 
     batter_prev_match = _fetch_player_recent_match_form(conn, timeline, batter, role="batter", n_matches=1)
     bowler_prev_match = _fetch_player_recent_match_form(conn, timeline, bowler, role="bowler", n_matches=1)
 
+    balls_remaining = max(0, 120 - legal_balls_before)
+    wickets_remaining = max(0, 10 - wickets_before)
+    runs_required = None
+    pressure_gap = None
+    if isinstance(target_runs, int):
+        runs_required = max(0, target_runs - score_before)
+    if isinstance(required_run_rate, float):
+        pressure_gap = round(required_run_rate - current_run_rate, 2)
+
     return {
         "innings_state": {
             "score_before": score_before,
@@ -428,20 +598,42 @@ def _collect_contextual_features(conn: sqlite3.Connection, target: sqlite3.Row, 
             "legal_balls_before": legal_balls_before,
             "current_run_rate": current_run_rate,
             "required_run_rate": required_run_rate,
+            "runs_required": runs_required,
+            "pressure_gap": pressure_gap,
+            "balls_remaining": balls_remaining,
+            "wickets_remaining": wickets_remaining,
             "target_runs": target_runs,
             "phase": phase,
             "wickets_bucket": _bucket_wickets(wickets_before),
+            "over_window": over_bucket,
         },
         "striker_innings": {
             "runs": int(striker_innings["runs"]),
             "balls": int(striker_innings["balls"]),
             "boundaries": int(striker_innings["boundaries"]),
+            "strike_rate": round((int(striker_innings["runs"]) * 100.0 / int(striker_innings["balls"])), 2)
+            if int(striker_innings["balls"])
+            else 0.0,
         },
         "bowler_innings": {
             "runs": int(bowler_innings["runs"]),
             "balls": int(bowler_innings["balls"]),
             "wickets": int(bowler_innings["wickets"]),
             "boundaries": int(bowler_innings["boundaries"]),
+            "economy": round((int(bowler_innings["runs"]) / (int(bowler_innings["balls"]) / 6.0)), 2) if int(bowler_innings["balls"]) else 0.0,
+        },
+        "recent_match_state": {
+            "window_deliveries": int(recent_window["legal_balls"]),
+            "runs": int(recent_window["runs"]),
+            "wickets": int(recent_window["wickets"]),
+            "boundaries": int(recent_window["boundaries"]),
+            "dots": int(recent_window["dots"]),
+        },
+        "partnership": {
+            "runs": int(partnership["runs"]),
+            "balls": int(partnership["balls"]),
+            "boundaries": int(partnership["boundaries"]),
+            "deliveries": int(partnership["deliveries"]),
         },
         "batter_history": {
             "runs": int(batter_hist["runs"]),
@@ -466,9 +658,25 @@ def _collect_contextual_features(conn: sqlite3.Connection, target: sqlite3.Row, 
             "bowler": bowler,
             "outcomes": _counter_to_probability_payload(matchup_counts),
         },
+        "matchups": {
+            "batter_vs_bowling_type": _counter_to_probability_payload(batter_vs_type_counts),
+            "bowler_vs_batter_type": _counter_to_probability_payload(bowler_vs_batter_type_counts),
+        },
         "phase_history": _counter_to_probability_payload(phase_counts),
+        "team_context": {
+            "batting_team": str(target["team_batting"]),
+            "bowling_team": str(target["team_bowling"]),
+            "batting_team_outcomes": _counter_to_probability_payload(team_batting_counts),
+            "bowling_team_outcomes": _counter_to_probability_payload(team_bowling_counts),
+        },
+        "venue_context": {
+            "venue": venue,
+            "evidence_tier": _venue_evidence_tier(int(sum(venue_counts.values()))),
+            "outcomes": _counter_to_probability_payload(venue_counts),
+        },
         "similar_situations": {
-            "definition": "phase + batter type + bowler type",
+            "definition": "deterministic fallback: state+type+phase -> type+phase",
+            "selected_level": similarity_level,
             "outcomes": _counter_to_probability_payload(similar_counts),
         },
         "recent_deliveries": {
@@ -493,6 +701,9 @@ def _apply_context_multipliers(probabilities: dict[str, float], contextual_featu
     innings_state = contextual_features["innings_state"]
     striker = contextual_features["striker_innings"]
     bowler = contextual_features["bowler_innings"]
+    partnership = contextual_features["partnership"]
+    recent_state = contextual_features["recent_match_state"]
+    venue_context = contextual_features["venue_context"]
     matchup_sample = int(contextual_features["matchup"]["outcomes"]["sample_size"])
     recent = contextual_features["recent_deliveries"]
 
@@ -512,6 +723,13 @@ def _apply_context_multipliers(probabilities: dict[str, float], contextual_featu
             adjusted["4"] *= 0.95
             adjusted["6"] *= 0.90
             notes.append("Chase is ahead of rate, so lower-risk outcomes were favored.")
+
+    wickets_remaining = int(innings_state.get("wickets_remaining", 10))
+    if wickets_remaining <= 3:
+        adjusted["wicket"] *= 1.08
+        adjusted["0"] *= 1.04
+        adjusted["6"] *= 0.95
+        notes.append("Few wickets in hand increased dismissal risk and reduced high-variance shots.")
 
     striker_balls = int(striker["balls"])
     striker_runs = int(striker["runs"])
@@ -549,6 +767,35 @@ def _apply_context_multipliers(probabilities: dict[str, float], contextual_featu
         adjusted["wicket"] *= 1.06
         notes.append("Recent wicket event raised dismissal risk.")
 
+    partnership_balls = int(partnership.get("balls", 0))
+    partnership_runs = int(partnership.get("runs", 0))
+    if partnership_balls >= 12:
+        partnership_sr = (partnership_runs * 100.0) / partnership_balls if partnership_balls else 0.0
+        if partnership_sr >= 150.0:
+            adjusted["1"] *= 1.05
+            adjusted["4"] *= 1.06
+            notes.append("Current partnership has positive scoring momentum.")
+
+    recent_legal = int(recent_state.get("window_deliveries", 0))
+    recent_runs = int(recent_state.get("runs", 0))
+    if recent_legal >= 6:
+        recent_rr = (recent_runs * 6.0) / recent_legal if recent_legal else 0.0
+        if recent_rr <= 5.0:
+            adjusted["0"] *= 1.05
+            adjusted["wicket"] *= 1.03
+            notes.append("Short-term innings tempo is subdued.")
+        elif recent_rr >= 10.0:
+            adjusted["4"] *= 1.06
+            adjusted["6"] *= 1.05
+            notes.append("Short-term innings tempo is aggressive.")
+
+    venue_sample = int(venue_context.get("outcomes", {}).get("sample_size", 0))
+    if venue_sample >= 600:
+        venue_probs = venue_context.get("outcomes", {}).get("outcome_probabilities", {})
+        if float(venue_probs.get("6", 0.0)) >= 0.03:
+            adjusted["6"] *= 1.03
+            notes.append("Venue history supports six-hitting at this ground.")
+
     matchup_probs = contextual_features["matchup"]["outcomes"]["outcome_probabilities"]
     if matchup_sample >= 20 and matchup_probs.get("wicket", 0.0) >= 0.1:
         adjusted["wicket"] *= 1.08
@@ -562,6 +809,10 @@ def _feature_snapshot_from_context(context: PredictionContext) -> dict[str, Any]
     innings_state = cf["innings_state"]
     striker = cf["striker_innings"]
     bowler = cf["bowler_innings"]
+    partnership = cf["partnership"]
+    recent_state = cf["recent_match_state"]
+    venue_context = cf["venue_context"]
+    team_context = cf["team_context"]
     matchup = cf["matchup"]["outcomes"]
     similar = cf["similar_situations"]["outcomes"]
     recent = cf["recent_deliveries"]
@@ -573,10 +824,22 @@ def _feature_snapshot_from_context(context: PredictionContext) -> dict[str, Any]
         "legal_balls_before": innings_state["legal_balls_before"],
         "current_run_rate": innings_state["current_run_rate"],
         "required_run_rate": innings_state.get("required_run_rate"),
+        "pressure_gap": innings_state.get("pressure_gap"),
+        "runs_required": innings_state.get("runs_required"),
+        "balls_remaining": innings_state.get("balls_remaining"),
+        "wickets_remaining": innings_state.get("wickets_remaining"),
         "striker_runs": striker["runs"],
         "striker_balls": striker["balls"],
         "bowler_spell_runs": bowler["runs"],
         "bowler_spell_balls": bowler["balls"],
+        "partnership_runs": partnership.get("runs"),
+        "partnership_balls": partnership.get("balls"),
+        "recent_window_runs": recent_state.get("runs"),
+        "recent_window_wickets": recent_state.get("wickets"),
+        "batting_team": team_context.get("batting_team"),
+        "bowling_team": team_context.get("bowling_team"),
+        "venue": venue_context.get("venue"),
+        "venue_sample": venue_context.get("outcomes", {}).get("sample_size", 0),
         "matchup_sample": matchup["sample_size"],
         "similar_sample": similar["sample_size"],
         "recent_outcomes": recent.get("outcomes", []),
@@ -591,10 +854,19 @@ def _build_prediction_difference(previous_snapshot: dict[str, Any], current_snap
         "legal_balls_before": "Legal balls faced in innings",
         "current_run_rate": "Current run rate",
         "required_run_rate": "Required run rate",
+        "pressure_gap": "Run-rate pressure gap",
+        "runs_required": "Runs required",
+        "balls_remaining": "Balls remaining",
+        "wickets_remaining": "Wickets remaining",
         "striker_runs": "Striker runs",
         "striker_balls": "Striker balls",
         "bowler_spell_runs": "Bowler spell runs",
         "bowler_spell_balls": "Bowler spell balls",
+        "partnership_runs": "Current partnership runs",
+        "partnership_balls": "Current partnership balls",
+        "recent_window_runs": "Recent scoring window runs",
+        "recent_window_wickets": "Recent scoring window wickets",
+        "venue_sample": "Venue evidence sample",
         "matchup_sample": "Batter vs bowler evidence sample",
         "similar_sample": "Comparable situation sample",
     }
@@ -640,6 +912,31 @@ def predict_contextual_from_context(context: PredictionContext) -> dict[str, Any
         ("batter_history", batter_probs, min(0.18, 0.18 * (batter_sample / 1600.0))),
         ("bowler_history", bowler_probs, min(0.16, 0.16 * (bowler_sample / 1600.0))),
         ("batter_bowler_matchup", matchup_probs, min(0.20, 0.20 * (matchup_sample / 140.0))),
+        (
+            "batter_vs_bowling_type",
+            cf["matchups"]["batter_vs_bowling_type"]["outcome_probabilities"],
+            min(0.10, 0.10 * (int(cf["matchups"]["batter_vs_bowling_type"]["sample_size"]) / 220.0)),
+        ),
+        (
+            "bowler_vs_batter_type",
+            cf["matchups"]["bowler_vs_batter_type"]["outcome_probabilities"],
+            min(0.09, 0.09 * (int(cf["matchups"]["bowler_vs_batter_type"]["sample_size"]) / 220.0)),
+        ),
+        (
+            "batting_team_context",
+            cf["team_context"]["batting_team_outcomes"]["outcome_probabilities"],
+            min(0.08, 0.08 * (int(cf["team_context"]["batting_team_outcomes"]["sample_size"]) / 4000.0)),
+        ),
+        (
+            "bowling_team_context",
+            cf["team_context"]["bowling_team_outcomes"]["outcome_probabilities"],
+            min(0.08, 0.08 * (int(cf["team_context"]["bowling_team_outcomes"]["sample_size"]) / 4000.0)),
+        ),
+        (
+            "venue_context",
+            cf["venue_context"]["outcomes"]["outcome_probabilities"],
+            min(0.07, 0.07 * (int(cf["venue_context"]["outcomes"]["sample_size"]) / 2400.0)),
+        ),
         ("similar_situations", similar_probs, min(0.14, 0.14 * (similar_sample / 2000.0))),
         ("recent_innings_window", recent_probs, min(0.08, 0.08 * (recent_sample / 6.0))),
     ]
@@ -661,9 +958,54 @@ def predict_contextual_from_context(context: PredictionContext) -> dict[str, Any
         "batter historical scoring profile",
         "bowler historical concession profile",
         "batter vs bowler matchup",
+        "batter-vs-bowling-type and bowler-vs-batter-type matchups",
+        "team batting and bowling context",
+        "venue outcomes with reliability-aware fallback",
         "phase-specific history",
         "current innings pressure and recent ball pattern",
-        "comparable type/phase situations",
+        f"comparable situations ({cf['similar_situations'].get('selected_level', 'fallback')})",
+    ]
+
+    def ledger_item(
+        feature: str,
+        value: Any,
+        source: str,
+        sample_size: int,
+        influence: str,
+    ) -> dict[str, Any]:
+        return {
+            "feature": feature,
+            "value": value,
+            "source": source,
+            "historical_cutoff": context.timeline_key,
+            "sample_size": sample_size,
+            "strength": _sample_reliability(sample_size),
+            "influence": influence,
+        }
+
+    feature_ledger = [
+        ledger_item("current_score", cf["innings_state"]["score_before"], "match_state", 1, "state_input"),
+        ledger_item("wickets_before", cf["innings_state"]["wickets_before"], "match_state", 1, "state_input"),
+        ledger_item("current_run_rate", cf["innings_state"]["current_run_rate"], "derived_match_state", 1, "tempo_signal"),
+        ledger_item("required_run_rate", cf["innings_state"].get("required_run_rate"), "derived_match_state", 1, "pressure_signal"),
+        ledger_item("pressure_gap", cf["innings_state"].get("pressure_gap"), "derived_match_state", 1, "pressure_signal"),
+        ledger_item("batter_history_distribution", batter_probs, "deliveries.timeline_key", batter_sample, "blend_component"),
+        ledger_item("bowler_history_distribution", bowler_probs, "deliveries.timeline_key", bowler_sample, "blend_component"),
+        ledger_item("batter_bowler_matchup_distribution", matchup_probs, "deliveries.timeline_key", matchup_sample, "blend_component"),
+        ledger_item(
+            "similar_situations_distribution",
+            similar_probs,
+            f"deliveries.timeline_key[{cf['similar_situations'].get('selected_level', 'fallback')}]",
+            similar_sample,
+            "blend_component",
+        ),
+        ledger_item(
+            "venue_distribution",
+            cf["venue_context"]["outcomes"]["outcome_probabilities"],
+            "match_metadata+deliveries",
+            int(cf["venue_context"]["outcomes"]["sample_size"]),
+            f"venue_{cf['venue_context'].get('evidence_tier', 'fallback')}",
+        ),
     ]
 
     return {
@@ -681,6 +1023,7 @@ def predict_contextual_from_context(context: PredictionContext) -> dict[str, Any
             "matchup_deliveries": matchup_sample,
             "blend_contribution": blend_contribution,
             "adjustment_notes": adjustment_notes,
+            "feature_ledger": feature_ledger,
         },
         "feature_snapshot": _feature_snapshot_from_context(context),
         "debug": {

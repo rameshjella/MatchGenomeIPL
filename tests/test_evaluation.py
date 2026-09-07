@@ -336,6 +336,24 @@ class EvaluationTests(unittest.TestCase):
             )
             self.assertIn("candidates", report)
             self.assertIn("combined_context", report["candidates"])
+            self.assertIn("team_opposition_context", report["candidates"])
+            self.assertIn("similar_situations_context", report["candidates"])
+        finally:
+            conn.close()
+
+    def test_temporal_report_includes_calibration_and_sample_buckets(self) -> None:
+        conn, _ = self._build_conn_with_fixture()
+        try:
+            report = evaluate_temporal_models(
+                conn,
+                knowledge_cutoff=KnowledgeCutoff(2020),
+                evaluation_window=EvaluationWindow(2021),
+                tuning_config=self._fast_config(),
+            )
+            baseline = report["models"]["matchgenome_hierarchical"]
+            self.assertIn("calibration", baseline)
+            self.assertIn("sample_size_buckets", baseline)
+            self.assertIn("prediction_latency", report)
         finally:
             conn.close()
 

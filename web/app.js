@@ -105,6 +105,9 @@ const els = {
   stateScoreValue: document.getElementById("stateScoreValue"),
   stateWicketsValue: document.getElementById("stateWicketsValue"),
   stateBallsValue: document.getElementById("stateBallsValue"),
+  stateRrValue: document.getElementById("stateRrValue"),
+  stateReqRrValue: document.getElementById("stateReqRrValue"),
+  statePressureValue: document.getElementById("statePressureValue"),
   predictedTop: document.getElementById("predictedTop"),
   predictedPct: document.getElementById("predictedPct"),
   probabilityBars: document.getElementById("probabilityBars"),
@@ -504,6 +507,7 @@ function renderPrediction(pred) {
     .join("");
 
   const evidence = pred.prediction.evidence || {};
+  const featureLedger = Array.isArray(evidence.feature_ledger) ? evidence.feature_ledger : [];
   const lookedAt = (evidence.looked_at || []).map((x) => `<li>${x}</li>`).join("");
   const comparable = Number(evidence.comparable_deliveries || 0);
   const matchup = Number(evidence.matchup_deliveries || 0);
@@ -531,6 +535,14 @@ function renderPrediction(pred) {
     <p>${outcomeDisplay(top)} at ${toPct(topProb)} probability.</p>
     <h5>Evidence</h5>
     <p>Sample size: ${pred.prediction.evidence_sample_size || 0} · Reliability: ${reliability}</p>
+    ${featureLedger.length
+      ? `<details><summary>Feature ledger</summary><div class='table-wrap'><table class='mini-table'><thead><tr><th>Feature</th><th>Value</th><th>Sample</th><th>Strength</th><th>Influence</th></tr></thead><tbody>${featureLedger
+          .slice(0, 12)
+          .map(
+            (f) => `<tr><td>${f.feature || "-"}</td><td>${typeof f.value === "object" ? JSON.stringify(f.value) : metricDisplay(f.value)}</td><td>${metricDisplay(f.sample_size)}</td><td>${metricDisplay(f.strength)}</td><td>${metricDisplay(f.influence)}</td></tr>`,
+          )
+          .join("")}</tbody></table></div></details>`
+      : ""}
   `;
 
   els.distributionBlock.innerHTML = `<h5>Distribution</h5>${entries
@@ -566,6 +578,10 @@ function renderState(pred) {
   els.stateScoreValue.textContent = String(s.score || 0);
   els.stateWicketsValue.textContent = String(s.wickets || 0);
   els.stateBallsValue.textContent = `${toOverNotation(s.legal_balls || 0)} overs`;
+  const snapshot = pred.prediction.feature_snapshot || {};
+  els.stateRrValue.textContent = snapshot.current_run_rate !== undefined ? String(snapshot.current_run_rate) : "-";
+  els.stateReqRrValue.textContent = snapshot.required_run_rate !== undefined && snapshot.required_run_rate !== null ? String(snapshot.required_run_rate) : "-";
+  els.statePressureValue.textContent = snapshot.pressure_gap !== undefined && snapshot.pressure_gap !== null ? String(snapshot.pressure_gap) : "-";
 
   renderReplayHeaderMetrics();
 }
@@ -855,8 +871,9 @@ function renderAskResults(payload) {
         <p class='muted'>Evidence</p>
         <p>${item.result?.label || "Answer from local IPL data."}</p>
         <p class='muted'>${evidence.source || "MatchGenome IPL database"} · ${evidence.scope || ""}</p>
+        <p class='muted'>Filters used: ${JSON.stringify((item.query_plan && item.query_plan.filters) || {})}</p>
         ${player ? `<div class='row-actions'><button type='button' class='ask-player-link' data-player='${player}'>Open Player Intelligence</button></div>` : ""}
-        <details><summary>Query interpretation</summary><pre>${JSON.stringify(item.query_plan || {}, null, 2)}</pre></details>
+        <details><summary>Resolution details</summary><pre>${JSON.stringify((item.query_plan && item.query_plan.entities) || {}, null, 2)}</pre></details>
       </article>`;
     })
     .join("");

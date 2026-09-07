@@ -22,14 +22,19 @@ body {
   color: var(--text);
   font-family: "Inter", "Segoe UI", Arial, sans-serif;
   line-height: 1.45;
+  min-height: 100vh;
+  overflow: hidden;
 }
 
 .app {
-  max-width: 1400px;
+  max-width: 1480px;
   margin: 0 auto;
   padding: 18px;
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 14px;
+  height: 100vh;
+  min-height: 0;
 }
 
 .top-shell,
@@ -49,12 +54,15 @@ body {
 
 .top-shell {
   display: grid;
-  gap: 14px;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  padding: 12px 14px;
 }
 
 .brand-block h1 {
   margin: 4px 0 0;
-  font-size: clamp(1.4rem, 2vw, 2rem);
+  font-size: clamp(1.1rem, 1.4vw, 1.45rem);
 }
 
 .lede,
@@ -73,12 +81,21 @@ body {
 .mode-nav {
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  min-width: 0;
+}
+
+.mode-nav button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .view {
   display: grid;
   gap: 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .headline {
@@ -177,6 +194,7 @@ button:disabled {
 .player-layout {
   display: grid;
   gap: 12px;
+  min-height: 0;
 }
 
 .ask-layout {
@@ -204,7 +222,8 @@ button:disabled {
 }
 
 .time-machine-layout {
-  grid-template-columns: minmax(340px, 0.9fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+  height: 100%;
 }
 
 .discovery-pane,
@@ -213,12 +232,30 @@ button:disabled {
 .player-profile-pane {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.discovery-pane,
+.player-search-pane {
+  grid-template-rows: auto auto auto auto auto auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.workspace-pane,
+.player-profile-pane,
+.ask-results {
+  overflow: hidden;
+}
+
+.workspace-pane {
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .match-cards {
   display: grid;
   gap: 8px;
-  max-height: 420px;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -249,6 +286,7 @@ button:disabled {
   gap: 8px;
   border-bottom: 1px solid var(--line);
   padding-bottom: 10px;
+  min-width: 0;
 }
 
 .header-metrics {
@@ -285,10 +323,13 @@ button:disabled {
 .workspace-panel {
   display: grid;
   gap: 10px;
+  min-height: 0;
+  overflow: auto;
 }
 
 #panelPrediction {
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  align-content: start;
 }
 
 .prediction-hero,
@@ -299,6 +340,8 @@ button:disabled {
   padding: 12px;
   display: grid;
   gap: 10px;
+  min-width: 0;
+  align-content: start;
 }
 
 .versus {
@@ -361,6 +404,12 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.control-row button,
+.row-actions button,
+.title-row button {
+  flex: 0 0 auto;
+}
+
 .actual-block {
   border: 1px dashed var(--line);
   border-radius: 8px;
@@ -420,6 +469,7 @@ button:disabled {
 
 .table-wrap {
   overflow-x: auto;
+  max-width: 100%;
 }
 
 .mini-table {
@@ -478,6 +528,8 @@ button:disabled {
 .player-tab-panel {
   display: grid;
   gap: 10px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .stats-grid {
@@ -542,11 +594,23 @@ button:disabled {
 }
 
 @media (max-width: 1199px) {
+  .top-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-nav {
+    flex-wrap: wrap;
+  }
+
   .ask-layout,
   .time-machine-layout,
   #panelPrediction,
   .player-layout {
     grid-template-columns: 1fr;
+  }
+
+  .time-machine-layout {
+    grid-template-rows: minmax(240px, auto) minmax(0, 1fr);
   }
 
   .header-metrics {
@@ -555,12 +619,30 @@ button:disabled {
 }
 
 @media (max-width: 767px) {
+  body {
+    overflow: auto;
+  }
+
   .app {
     padding: 12px;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
   }
 
   .mode-nav button {
     flex: 1 1 46%;
+  }
+
+  .view,
+  .ask-layout,
+  .time-machine-layout,
+  .player-layout,
+  .workspace-pane,
+  .player-profile-pane,
+  .workspace-panel,
+  .player-tab-panel {
+    overflow: visible;
   }
 
   .launch-grid,

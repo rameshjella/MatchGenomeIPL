@@ -104,6 +104,19 @@ class PredictionTests(unittest.TestCase):
         self.assertEqual(pred["model_version"], "contextual_hybrid_v1")
         self.assertIn("feature_snapshot", pred)
         self.assertIn("matchup_sample", pred["feature_snapshot"])
+        self.assertIn("pressure_gap", pred["feature_snapshot"])
+
+    def test_contextual_prediction_exposes_feature_ledger(self) -> None:
+        pred = predict_next_ball(self.conn, 2021, 2, 1, 0, 1)
+        evidence = pred.get("evidence", {})
+        ledger = evidence.get("feature_ledger")
+        self.assertIsInstance(ledger, list)
+        self.assertGreaterEqual(len(ledger), 5)
+        first = ledger[0]
+        self.assertIn("feature", first)
+        self.assertIn("historical_cutoff", first)
+        self.assertIn("sample_size", first)
+        self.assertIn("strength", first)
 
     def test_optimized_prediction_matches_legacy_semantics(self) -> None:
         season_id, match_id, innings, over_number, ball_number = (2021, 2, 1, 0, 1)
