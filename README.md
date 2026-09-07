@@ -28,8 +28,11 @@ Prediction is shown before reveal, then reality is revealed and scored. This pre
 - Source-aware ingestion with fingerprinting and unchanged-source skip.
 - Pre-delivery match-state reconstruction.
 - Deterministic hierarchical baseline prediction with evidence and reliability.
+- Deterministic contextual prediction model with pre-ball player history, matchup context, and innings-pressure adjustments.
+- Prediction-difference diagnostics showing what changed between consecutive deliveries.
 - Time Machine session lifecycle (`predict -> reveal -> update`).
 - HTTP API transport and browser UI.
+- Ask MatchGenome natural-language querying over local SQLite with structured query planning and read-only SQL execution.
 - Player Intelligence profiles with role-aware sections, season/phase splits, matchup reliability, and replay return links.
 - Lightweight player discovery search backed directly by SQLite.
 
@@ -197,6 +200,14 @@ Open `http://127.0.0.1:8080`.
 - `GET /api/replays/{session_id}/summary`
 - `GET /api/players`
 - `GET /api/players/{player_name}`
+- `POST /api/ask`
+
+Ask API notes:
+
+- Input payload: `{ "question": "How many sixes did MS Dhoni hit in 2014?" }`
+- Compound questions are split into sub-questions and answered independently.
+- Unsupported sub-questions are reported explicitly; no fabricated answer is returned.
+- Query execution is read-only and allowlisted.
 
 Player API notes:
 

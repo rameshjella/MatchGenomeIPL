@@ -101,6 +101,29 @@ class HttpTransportTests(unittest.TestCase):
         self.assertIn("player", profile)
         self.assertIn("asset_type", profile["player"]["photo"])
 
+    def test_ask_endpoint_single_question(self) -> None:
+        status, payload = self._post("/api/ask", {"question": "How many sixes did PlayerA hit in 2020?"})
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["answered"], 1)
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertIn("query_plan", payload["results"][0])
+
+    def test_ask_endpoint_compound_questions(self) -> None:
+        status, payload = self._post(
+            "/api/ask",
+            {
+                "question": "How many runs did PlayerA score in 2020, what was his strike rate in 2020?",
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(payload["sub_questions"], 2)
+        self.assertGreaterEqual(payload["answered"], 2)
+
+    def test_ask_endpoint_blocks_destructive_prompt(self) -> None:
+        status, payload = self._post("/api/ask", {"question": "Drop the deliveries table"})
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["results"][0]["status"], "unsupported")
+
     def test_player_search_partial_name(self) -> None:
         status, players = self._get("/api/players?query=yerA&limit=10")
         self.assertEqual(status, 200)

@@ -139,16 +139,26 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
                 payload = _read_json_body(self)
                 match_id = int(payload["match_id"])
                 innings = int(payload["innings"])
+                model_version = str(payload.get("model_version", "")).strip() or None
                 start_over = payload.get("start_over_number")
                 start_ball = payload.get("start_ball_number")
                 result = self._app().api.post_replays(
                     match_id=match_id,
                     innings=innings,
+                    model_version=model_version,
                     start_over_number=None if start_over is None else int(start_over),
                     start_ball_number=None if start_ball is None else int(start_ball),
                 )
                 status_code = HTTPStatus.CREATED
                 _json_response(self, HTTPStatus.CREATED, result)
+                return
+
+            if self.path == "/api/ask":
+                payload = _read_json_body(self)
+                question = str(payload.get("question", "")).strip()
+                if not question:
+                    raise ValueError("question is required")
+                _json_response(self, HTTPStatus.OK, self._app().api.post_ask(question))
                 return
 
             match = re.fullmatch(r"/api/replays/([0-9a-f\-]+)/predict", self.path)

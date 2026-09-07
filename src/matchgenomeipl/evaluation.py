@@ -13,6 +13,10 @@ from .constants import OUTCOME_LABELS
 from .match_state import innings_phase
 from .prediction import (
     HIERARCHICAL_CONTEXTS,
+    _normalize_probabilities,
+    _top_outcome,
+    build_prediction_context,
+    predict_contextual_from_context,
     predict_global_baseline_from_counts,
     predict_hierarchical_from_count_map,
     predict_phase_baseline_from_counts,
@@ -22,6 +26,119 @@ from .prediction import (
 BASE_MODELS = ("global", "phase", "matchgenome_hierarchical")
 MIXTURE_MODEL = "calibrated_mixture"
 TIME_DECAYED_MIXTURE_MODEL = "time_decayed_mixture"
+
+
+def _blend_candidate(components: list[tuple[dict[str, float], float]]) -> dict[str, float]:
+    total = sum(weight for _, weight in components if weight > 0.0)
+    if total <= 0.0:
+        return {label: round(1.0 / len(OUTCOME_LABELS), 6) for label in OUTCOME_LABELS}
+    raw = {label: 0.0 for label in OUTCOME_LABELS}
+    for probs, weight in components:
+        if weight <= 0.0:
+            continue
+        for label in OUTCOME_LABELS:
+            raw[label] += (weight / total) * probs[label]
+    return _normalize_probabilities(raw)
+
+
+def evaluate_contextual_candidates(
+    conn: sqlite3.Connection,
+    knowledge_cutoff: KnowledgeCutoff,
+    evaluation_window: EvaluationWindow,
+    max_deliveries: int | None = None,
+) -> dict[str, Any]:
+    rows = ordered_deliveries(conn)
+    eval_rows = [
+        row
+        for row in rows
+        if int(row["season_id"]) == evaluation_window.season_id and not knowledge_cutoff.allows_season(int(row["season_id"]))
+    ]
+    if max_deliveries is not None:
+        eval_rows = eval_rows[:max_deliveries]
+
+    candidates = {
+        "baseline": MetricAccumulator(),
+        "player_history_context": MetricAccumulator(),
+        "matchup_context": MetricAccumulator(),
+        "combined_context": MetricAccumulator(),
+    }
+    phase_metrics = {
+        name: {"powerplay": MetricAccumulator(), "middle": MetricAccumulator(), "death": MetricAccumulator()}
+        for name in candidates
+    }
+
+    traces: list[dict[str, Any]] = []
+    for row in eval_rows:
+        context = build_prediction_context(
+            conn,
+            int(row["season_id"]),
+            int(row["match_id"]),
+            int(row["innings"]),
+            int(row["over_number"]),
+            int(row["ball_number"]),
+        )
+        baseline = predict_hierarchical_from_count_map(context.feature_values, context.context_count_map, context.global_counts)
+        combined = predict_contextual_from_context(context)
+        cf = context.contextual_features
+
+        player_history = _blend_candidate(
+            [
+                (baseline["outcome_probabilities"], 0.4),
+                (cf["batter_history"]["outcomes"]["outcome_probabilities"], 0.35),
+                (cf["bowler_history"]["outcomes"]["outcome_probabilities"], 0.25),
+            ]
+        )
+        matchup_context = _blend_candidate(
+            [
+                (baseline["outcome_probabilities"], 0.35),
+                (cf["matchup"]["outcomes"]["outcome_probabilities"], 0.35),
+                (cf["similar_situations"]["outcomes"]["outcome_probabilities"], 0.2),
+                (cf["recent_deliveries"]["distribution"]["outcome_probabilities"], 0.1),
+            ]
+        )
+
+        payloads = {
+            "baseline": baseline["outcome_probabilities"],
+            "player_history_context": player_history,
+            "matchup_context": matchup_context,
+            "combined_context": combined["outcome_probabilities"],
+        }
+        actual = classify_delivery_outcome(context.target)
+        phase = context.phase
+        for candidate_name, probs in payloads.items():
+            candidates[candidate_name].add(probs, actual)
+            phase_metrics[candidate_name][phase].add(probs, actual)
+
+        traces.append(
+            {
+                "target": context.target_identity,
+                "phase": phase,
+                "actual_outcome": actual,
+                "predictions": {
+                    name: {
+                        "top": _top_outcome(probs),
+                        "probabilities": probs,
+                    }
+                    for name, probs in payloads.items()
+                },
+            }
+        )
+
+    return {
+        "evaluation_name": f"contextual_candidates_{knowledge_cutoff.season_id_inclusive}_to_{evaluation_window.season_id}",
+        "knowledge_cutoff": {"season_id_inclusive": knowledge_cutoff.season_id_inclusive},
+        "evaluation_period": {"season_id": evaluation_window.season_id},
+        "chronology_method": CHRONOLOGY_METHOD,
+        "evaluated_deliveries": len(eval_rows),
+        "candidates": {
+            name: {
+                "overall": metrics.as_metrics(),
+                "phase_breakdown": {phase: phase_metrics[name][phase].as_metrics() for phase in ("powerplay", "middle", "death")},
+            }
+            for name, metrics in candidates.items()
+        },
+        "delivery_predictions": traces,
+    }
 
 
 @dataclass

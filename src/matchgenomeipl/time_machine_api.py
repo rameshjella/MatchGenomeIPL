@@ -27,12 +27,14 @@ class TimeMachineAPI:
         self,
         match_id: int,
         innings: int,
+        model_version: str | None = None,
         start_over_number: int | None = None,
         start_ball_number: int | None = None,
     ) -> dict[str, Any]:
         return self.service.create_replay_session(
             match_id=match_id,
             innings=innings,
+            model_version=model_version or self.service.DEFAULT_MODEL_VERSION,
             start_over_number=start_over_number,
             start_ball_number=start_ball_number,
         )
@@ -61,4 +63,7 @@ class TimeMachineAPI:
 
     def get_player(self, player_name: str, session_id: str | None = None) -> dict[str, Any]:
         return self.service.get_player(player_name, session_id=session_id)
+
+    def post_ask(self, question: str) -> dict[str, Any]:
+        return self.service.ask(question)
 

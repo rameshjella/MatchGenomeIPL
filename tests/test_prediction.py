@@ -18,6 +18,7 @@ from matchgenomeipl.prediction import (
     SequentialPredictionSession,
     build_prediction_context,
     predict_hierarchical_from_count_map,
+    predict_next_ball,
     predict_next_ball_baseline,
 )
 from matchgenomeipl.analytics import classify_delivery_outcome
@@ -40,24 +41,26 @@ class PredictionTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_probabilities_are_valid(self) -> None:
-        pred = predict_next_ball_baseline(self.conn, 2021, 2, 1, 0, 1)
+        pred = predict_next_ball(self.conn, 2021, 2, 1, 0, 1)
         probs = pred["outcome_probabilities"]
 
         self.assertTrue(all(v >= 0 for v in probs.values()))
         self.assertAlmostEqual(sum(probs.values()), 1.0, places=5)
 
     def test_prediction_is_deterministic(self) -> None:
-        p1 = predict_next_ball_baseline(self.conn, 2021, 2, 1, 0, 1)
-        p2 = predict_next_ball_baseline(self.conn, 2021, 2, 1, 0, 1)
+        p1 = predict_next_ball(self.conn, 2021, 2, 1, 0, 1)
+        p2 = predict_next_ball(self.conn, 2021, 2, 1, 0, 1)
         self.assertEqual(p1["chosen_evidence_level"], p2["chosen_evidence_level"])
         self.assertEqual(p1["outcome_probabilities"], p2["outcome_probabilities"])
 
     def test_prediction_context_matches_prediction_contract(self) -> None:
         context = build_prediction_context(self.conn, 2021, 2, 1, 0, 1)
-        pred = predict_next_ball_baseline(self.conn, 2021, 2, 1, 0, 1)
+        pred = predict_next_ball(self.conn, 2021, 2, 1, 0, 1)
         self.assertEqual(pred["state_identity"]["timeline_key"], context.timeline_key)
         self.assertEqual(pred["state_identity"]["legal_balls_before"], context.legal_balls_before)
         self.assertEqual(pred["state_identity"]["innings_phase"], context.phase)
+        self.assertIn("evidence", pred)
+        self.assertIn("looked_at", pred["evidence"])
 
     def test_sequential_replay_matches_direct_predictions(self) -> None:
         rows = self.conn.execute(
@@ -71,7 +74,7 @@ class PredictionTests(unittest.TestCase):
         ).fetchall()
 
         direct = [
-            predict_next_ball_baseline(self.conn, 2021, 2, 1, int(r["over_number"]), int(r["ball_number"]))
+            predict_next_ball(self.conn, 2021, 2, 1, int(r["over_number"]), int(r["ball_number"]))
             for r in rows
         ]
 
@@ -89,8 +92,18 @@ class PredictionTests(unittest.TestCase):
 
     def test_prediction_path_does_not_read_csv(self) -> None:
         with patch("pathlib.Path.open", side_effect=AssertionError("CSV should not be read during prediction")):
-            pred = predict_next_ball_baseline(self.conn, 2021, 2, 1, 0, 1)
+            pred = predict_next_ball(self.conn, 2021, 2, 1, 0, 1)
         self.assertIn("outcome_probabilities", pred)
+
+    def test_baseline_mode_is_preserved_for_regression(self) -> None:
+        p = predict_next_ball(self.conn, 2021, 2, 1, 0, 1, model_version="baseline_hierarchical_v1")
+        self.assertEqual(p["model_version"], "baseline_hierarchical_v1")
+
+    def test_contextual_prediction_exposes_feature_snapshot(self) -> None:
+        pred = predict_next_ball(self.conn, 2021, 2, 1, 0, 1)
+        self.assertEqual(pred["model_version"], "contextual_hybrid_v1")
+        self.assertIn("feature_snapshot", pred)
+        self.assertIn("matchup_sample", pred["feature_snapshot"])
 
     def test_optimized_prediction_matches_legacy_semantics(self) -> None:
         season_id, match_id, innings, over_number, ball_number = (2021, 2, 1, 0, 1)

@@ -17,6 +17,7 @@ from matchgenomeipl.chronology import EvaluationWindow, KnowledgeCutoff
 from matchgenomeipl.database import connect_db, initialize_schema
 from matchgenomeipl.evaluation import (
     MixtureTuningConfig,
+    evaluate_contextual_candidates,
     evaluate_temporal_models,
     recency_weight_for_age,
     tune_mixture_weights,
@@ -322,6 +323,19 @@ class EvaluationTests(unittest.TestCase):
             existing = result["models_additional"]["calibrated_mixture"]["overall"]
             decayed = result["models_additional"]["time_decayed_mixture"]["overall"]
             self.assertEqual(existing, decayed)
+        finally:
+            conn.close()
+
+    def test_contextual_candidate_report_is_available(self) -> None:
+        conn, _ = self._build_conn_with_fixture()
+        try:
+            report = evaluate_contextual_candidates(
+                conn,
+                knowledge_cutoff=KnowledgeCutoff(2020),
+                evaluation_window=EvaluationWindow(2021),
+            )
+            self.assertIn("candidates", report)
+            self.assertIn("combined_context", report["candidates"])
         finally:
             conn.close()
 

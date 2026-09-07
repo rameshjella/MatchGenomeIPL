@@ -9,8 +9,9 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from .ask_matchgenome import AskMatchGenomeEngine
 from .player_intelligence import get_player_intelligence, list_players
-from .prediction import SequentialPredictionSession
+from .prediction import DEFAULT_RUNTIME_MODEL_VERSION, SequentialPredictionSession
 from .runtime_logging import log_sql
 
 
@@ -124,6 +125,9 @@ class ReplaySession:
                 "reliability": raw["reliability"],
                 "outcome_probabilities": raw["outcome_probabilities"],
                 "predicted_top_outcome": raw["predicted_top_outcome"],
+                "evidence": raw.get("evidence", {}),
+                "feature_snapshot": raw.get("feature_snapshot", {}),
+                "prediction_difference": raw.get("prediction_difference"),
             },
         }
 
@@ -232,9 +236,12 @@ class ReplaySession:
 
 
 class TimeMachineService:
+    DEFAULT_MODEL_VERSION = DEFAULT_RUNTIME_MODEL_VERSION
+
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         self._sessions: dict[str, ReplaySession] = {}
+        self._ask_engine = AskMatchGenomeEngine(conn)
 
     def _fetchall(self, operation: str, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         started = time.perf_counter()
@@ -443,6 +450,7 @@ class TimeMachineService:
         self,
         match_id: int,
         innings: int,
+        model_version: str = DEFAULT_RUNTIME_MODEL_VERSION,
         start_over_number: int | None = None,
         start_ball_number: int | None = None,
     ) -> dict[str, Any]:
@@ -469,6 +477,7 @@ class TimeMachineService:
             season_id,
             match_id,
             innings,
+            model_version=model_version,
             start_over_number=start_over,
             start_ball_number=start_ball,
         )
@@ -480,7 +489,7 @@ class TimeMachineService:
             innings=innings,
             start_over_number=start_over,
             start_ball_number=start_ball,
-            model_version="baseline_hierarchical_v1",
+            model_version=model_version,
             sequence=sequence,
             status=ReplayStatus.CREATED,
             created_at_utc=datetime.now(timezone.utc).isoformat(),
@@ -532,4 +541,7 @@ class TimeMachineService:
                 }
             }
         return payload
+
+    def ask(self, question: str) -> dict[str, Any]:
+        return self._ask_engine.ask(question)
 

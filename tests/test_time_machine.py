@@ -202,7 +202,25 @@ class TimeMachineTests(unittest.TestCase):
             )
             direct.advance_with_actual()
 
-        self.assertEqual(replay_payloads, direct_payloads)
+        replay_core = [
+            {
+                "model_version": p["model_version"],
+                "chosen_evidence_level": p["chosen_evidence_level"],
+                "evidence_sample_size": p["evidence_sample_size"],
+                "reliability": p["reliability"],
+                "outcome_probabilities": p["outcome_probabilities"],
+                "predicted_top_outcome": p["predicted_top_outcome"],
+            }
+            for p in replay_payloads
+        ]
+        self.assertEqual(replay_core, direct_payloads)
+
+    def test_prediction_difference_diagnostics_are_emitted(self) -> None:
+        session_id = self._create_default_session_id()
+        self.api.post_replay_predict(session_id)
+        self.api.post_replay_reveal(session_id)
+        second = self.api.post_replay_predict(session_id)
+        self.assertIn("prediction_difference", second["prediction"])
 
     def test_db_only_replay_does_not_read_csv(self) -> None:
         session_id = self._create_default_session_id()

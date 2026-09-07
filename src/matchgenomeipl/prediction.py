@@ -20,6 +20,8 @@ HIERARCHICAL_CONTEXTS = [
     ("batter_type_bowler_type", 100, ("batsman_type", "bowler_type")),
 ]
 
+DEFAULT_RUNTIME_MODEL_VERSION = "contextual_hybrid_v1"
+
 
 def _smoothed_probabilities(counts: Counter[str], alpha: float = 1.0) -> dict[str, float]:
     total = float(sum(counts.values()))
@@ -32,6 +34,27 @@ def _smoothed_probabilities(counts: Counter[str], alpha: float = 1.0) -> dict[st
 
 def _top_outcome(probabilities: dict[str, float]) -> str:
     return sorted(probabilities.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+
+def _outcome_case_sql() -> str:
+    return (
+        "CASE "
+        "WHEN is_wicket = 1 THEN 'wicket' "
+        "WHEN total_runs = 0 THEN '0' "
+        "WHEN total_runs = 1 THEN '1' "
+        "WHEN total_runs = 2 THEN '2' "
+        "WHEN total_runs = 4 THEN '4' "
+        "WHEN total_runs = 6 THEN '6' "
+        "ELSE '3+' END"
+    )
+
+
+def _phase_over_clause(phase: str) -> str:
+    if phase == "powerplay":
+        return "over_number < 6"
+    if phase == "middle":
+        return "over_number BETWEEN 6 AND 14"
+    return "over_number >= 15"
 
 
 def probabilities_from_counts(counts: Counter[str]) -> dict[str, float]:
@@ -90,6 +113,584 @@ class PredictionContext:
     feature_values: dict[str, Any]
     global_counts: Counter[str]
     context_count_map: dict[tuple[str, tuple[Any, ...]], Counter[str]]
+    contextual_features: dict[str, Any]
+
+
+def _counter_to_probability_payload(counts: Counter[str], alpha: float = 1.0) -> dict[str, Any]:
+    sample_size = int(sum(counts.values()))
+    return {
+        "sample_size": sample_size,
+        "outcome_probabilities": _smoothed_probabilities(counts, alpha=alpha),
+    }
+
+
+def _normalize_probabilities(raw: dict[str, float]) -> dict[str, float]:
+    total = sum(raw.values())
+    if total <= 0.0:
+        uniform = round(1.0 / float(len(OUTCOME_LABELS)), 6)
+        return {label: uniform for label in OUTCOME_LABELS}
+    normalized = {label: round(raw.get(label, 0.0) / total, 6) for label in OUTCOME_LABELS}
+    residue = round(1.0 - sum(normalized.values()), 6)
+    if residue != 0.0:
+        best = _top_outcome(normalized)
+        normalized[best] = round(normalized[best] + residue, 6)
+    return normalized
+
+
+def _weighted_blend(
+    components: list[tuple[str, dict[str, float], float]],
+) -> tuple[dict[str, float], list[dict[str, Any]]]:
+    filtered = [(name, probs, weight) for name, probs, weight in components if weight > 0.0]
+    if not filtered:
+        return _normalize_probabilities({label: 1.0 for label in OUTCOME_LABELS}), []
+
+    weight_total = sum(weight for _, _, weight in filtered)
+    blended = {label: 0.0 for label in OUTCOME_LABELS}
+    contribution: list[dict[str, Any]] = []
+    for name, probs, raw_weight in filtered:
+        normalized_weight = raw_weight / weight_total
+        contribution.append({"source": name, "weight": round(normalized_weight, 6)})
+        for label in OUTCOME_LABELS:
+            blended[label] += normalized_weight * probs[label]
+    return _normalize_probabilities(blended), contribution
+
+
+def _compute_reliability(sample_size: int) -> str:
+    if sample_size >= 180:
+        return "high"
+    if sample_size >= 60:
+        return "medium"
+    if sample_size >= 20:
+        return "low"
+    return "small"
+
+
+def _bucket_wickets(wickets_before: int) -> str:
+    if wickets_before <= 2:
+        return "0-2"
+    if wickets_before <= 5:
+        return "3-5"
+    return "6+"
+
+
+def _fetch_outcome_counts(
+    conn: sqlite3.Connection,
+    timeline: str,
+    where_clause: str = "",
+    params: tuple[Any, ...] = (),
+) -> Counter[str]:
+    sql = (
+        f"""
+        SELECT {_outcome_case_sql()} AS outcome_label, COUNT(*) AS deliveries
+        FROM deliveries
+        WHERE timeline_key < ?
+        """
+        + where_clause
+        + "\nGROUP BY outcome_label"
+    )
+    return _counts_from_query(conn, sql, (timeline,) + params)
+
+
+def _fetch_recent_outcomes(
+    conn: sqlite3.Connection,
+    season_id: int,
+    match_id: int,
+    innings: int,
+    over_number: int,
+    ball_number: int,
+    limit: int = 6,
+) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM deliveries
+        WHERE season_id = ? AND match_id = ? AND innings = ?
+          AND (over_number < ? OR (over_number = ? AND ball_number < ?))
+        ORDER BY over_number DESC, ball_number DESC, source_row_number DESC
+        LIMIT ?
+        """,
+        (season_id, match_id, innings, over_number, over_number, ball_number, limit),
+    ).fetchall()
+    return [classify_delivery_outcome(row) for row in reversed(rows)]
+
+
+def _fetch_player_recent_match_form(
+    conn: sqlite3.Connection,
+    timeline: str,
+    player: str,
+    role: str,
+    n_matches: int = 3,
+) -> dict[str, Any]:
+    selector = "batter" if role == "batter" else "bowler"
+    matches = conn.execute(
+        f"""
+        SELECT season_id, match_id
+        FROM deliveries
+        WHERE timeline_key < ? AND {selector} = ?
+        GROUP BY season_id, match_id
+        ORDER BY season_id DESC, match_id DESC
+        LIMIT ?
+        """,
+        (timeline, player, n_matches),
+    ).fetchall()
+    if not matches:
+        return {
+            "matches": 0,
+            "runs": 0,
+            "balls": 0,
+            "boundaries": 0,
+            "dismissals": 0,
+            "wickets": 0,
+            "strike_rate": 0.0,
+            "economy": 0.0,
+        }
+
+    runs = 0
+    balls = 0
+    boundaries = 0
+    dismissals = 0
+    wickets = 0
+    for match in matches:
+        season_id = int(match["season_id"])
+        match_id = int(match["match_id"])
+        if role == "batter":
+            row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(batter_runs), 0) AS runs,
+                    COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls,
+                    COALESCE(SUM(CASE WHEN batter_runs IN (4, 6) THEN 1 ELSE 0 END), 0) AS boundaries,
+                    COALESCE(SUM(CASE WHEN is_wicket = 1 AND player_out = ? THEN 1 ELSE 0 END), 0) AS dismissals
+                FROM deliveries
+                WHERE season_id = ? AND match_id = ? AND batter = ?
+                """,
+                (player, season_id, match_id, player),
+            ).fetchone()
+            runs += int(row["runs"])
+            balls += int(row["balls"])
+            boundaries += int(row["boundaries"])
+            dismissals += int(row["dismissals"])
+        else:
+            row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(total_runs - bye_runs - leg_bye_runs), 0) AS runs,
+                    COALESCE(SUM(legal_ball), 0) AS balls,
+                    COALESCE(SUM(CASE WHEN total_runs IN (4, 6) THEN 1 ELSE 0 END), 0) AS boundaries,
+                    COALESCE(SUM(CASE WHEN is_wicket = 1 THEN 1 ELSE 0 END), 0) AS wickets
+                FROM deliveries
+                WHERE season_id = ? AND match_id = ? AND bowler = ?
+                """,
+                (season_id, match_id, player),
+            ).fetchone()
+            runs += int(row["runs"])
+            balls += int(row["balls"])
+            boundaries += int(row["boundaries"])
+            wickets += int(row["wickets"])
+
+    strike_rate = round((runs * 100.0 / balls), 2) if balls else 0.0
+    economy = round((runs / (balls / 6.0)), 2) if balls else 0.0
+    return {
+        "matches": len(matches),
+        "runs": runs,
+        "balls": balls,
+        "boundaries": boundaries,
+        "dismissals": dismissals,
+        "wickets": wickets,
+        "strike_rate": strike_rate,
+        "economy": economy,
+    }
+
+
+def _collect_contextual_features(conn: sqlite3.Connection, target: sqlite3.Row, timeline: str, phase: str) -> dict[str, Any]:
+    batter = str(target["batter"])
+    bowler = str(target["bowler"])
+    season_id = int(target["season_id"])
+    match_id = int(target["match_id"])
+    innings = int(target["innings"])
+    over_number = int(target["over_number"])
+    ball_number = int(target["ball_number"])
+
+    batter_hist = conn.execute(
+        """
+        SELECT
+            COALESCE(SUM(batter_runs), 0) AS runs,
+            COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls,
+            COALESCE(SUM(CASE WHEN batter_runs = 4 THEN 1 ELSE 0 END), 0) AS fours,
+            COALESCE(SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes,
+            COALESCE(SUM(CASE WHEN total_runs = 0 AND is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS dots,
+            COALESCE(SUM(CASE WHEN is_wicket = 1 AND player_out = ? THEN 1 ELSE 0 END), 0) AS dismissals
+        FROM deliveries
+        WHERE timeline_key < ? AND batter = ?
+        """,
+        (batter, timeline, batter),
+    ).fetchone()
+    bowler_hist = conn.execute(
+        """
+        SELECT
+            COALESCE(SUM(total_runs - bye_runs - leg_bye_runs), 0) AS runs_conceded,
+            COALESCE(SUM(legal_ball), 0) AS legal_balls,
+            COALESCE(SUM(CASE WHEN is_wicket = 1 THEN 1 ELSE 0 END), 0) AS wickets,
+            COALESCE(SUM(CASE WHEN total_runs = 0 THEN 1 ELSE 0 END), 0) AS dots,
+            COALESCE(SUM(CASE WHEN total_runs = 4 THEN 1 ELSE 0 END), 0) AS fours_conceded,
+            COALESCE(SUM(CASE WHEN total_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes_conceded
+        FROM deliveries
+        WHERE timeline_key < ? AND bowler = ?
+        """,
+        (timeline, bowler),
+    ).fetchone()
+
+    innings_state = conn.execute(
+        """
+        SELECT
+            COALESCE(SUM(total_runs), 0) AS score_before,
+            COALESCE(SUM(is_wicket), 0) AS wickets_before,
+            COALESCE(SUM(legal_ball), 0) AS legal_balls_before
+        FROM deliveries
+        WHERE season_id = ? AND match_id = ? AND innings = ?
+          AND (over_number < ? OR (over_number = ? AND ball_number < ?))
+        """,
+        (season_id, match_id, innings, over_number, over_number, ball_number),
+    ).fetchone()
+
+    striker_innings = conn.execute(
+        """
+        SELECT
+            COALESCE(SUM(batter_runs), 0) AS runs,
+            COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls,
+            COALESCE(SUM(CASE WHEN batter_runs IN (4, 6) THEN 1 ELSE 0 END), 0) AS boundaries
+        FROM deliveries
+        WHERE season_id = ? AND match_id = ? AND innings = ? AND batter = ?
+          AND (over_number < ? OR (over_number = ? AND ball_number < ?))
+        """,
+        (season_id, match_id, innings, batter, over_number, over_number, ball_number),
+    ).fetchone()
+
+    bowler_innings = conn.execute(
+        """
+        SELECT
+            COALESCE(SUM(total_runs - bye_runs - leg_bye_runs), 0) AS runs,
+            COALESCE(SUM(legal_ball), 0) AS balls,
+            COALESCE(SUM(CASE WHEN is_wicket = 1 THEN 1 ELSE 0 END), 0) AS wickets,
+            COALESCE(SUM(CASE WHEN total_runs IN (4, 6) THEN 1 ELSE 0 END), 0) AS boundaries
+        FROM deliveries
+        WHERE season_id = ? AND match_id = ? AND innings = ? AND bowler = ?
+          AND (over_number < ? OR (over_number = ? AND ball_number < ?))
+        """,
+        (season_id, match_id, innings, bowler, over_number, over_number, ball_number),
+    ).fetchone()
+
+    legal_balls_before = int(innings_state["legal_balls_before"])
+    score_before = int(innings_state["score_before"])
+    wickets_before = int(innings_state["wickets_before"])
+    current_run_rate = round((score_before / (legal_balls_before / 6.0)), 2) if legal_balls_before else 0.0
+    target_runs = None
+    required_run_rate = None
+    if innings == 2:
+        first_innings = conn.execute(
+            """
+            SELECT runs
+            FROM innings_summary
+            WHERE season_id = ? AND match_id = ? AND innings = 1
+            """,
+            (season_id, match_id),
+        ).fetchone()
+        if first_innings is not None:
+            target_runs = int(first_innings["runs"]) + 1
+            remaining_runs = max(0, target_runs - score_before)
+            remaining_balls = max(1, 120 - legal_balls_before)
+            required_run_rate = round((remaining_runs * 6.0) / remaining_balls, 2)
+
+    batter_counts = _fetch_outcome_counts(conn, timeline, " AND batter = ?", (batter,))
+    bowler_counts = _fetch_outcome_counts(conn, timeline, " AND bowler = ?", (bowler,))
+    matchup_counts = _fetch_outcome_counts(conn, timeline, " AND batter = ? AND bowler = ?", (batter, bowler))
+    phase_counts = _fetch_outcome_counts(conn, timeline, " AND " + _phase_over_clause(phase))
+    similar_counts = _fetch_outcome_counts(
+        conn,
+        timeline,
+        " AND batsman_type = ? AND bowler_type = ? AND " + _phase_over_clause(phase),
+        (target["batsman_type"], target["bowler_type"]),
+    )
+    recent_outcomes = _fetch_recent_outcomes(conn, season_id, match_id, innings, over_number, ball_number, limit=6)
+    recent_counter = Counter(recent_outcomes)
+
+    batter_recent = _fetch_player_recent_match_form(conn, timeline, batter, role="batter", n_matches=3)
+    bowler_recent = _fetch_player_recent_match_form(conn, timeline, bowler, role="bowler", n_matches=3)
+    batter_prev_match = _fetch_player_recent_match_form(conn, timeline, batter, role="batter", n_matches=1)
+    bowler_prev_match = _fetch_player_recent_match_form(conn, timeline, bowler, role="bowler", n_matches=1)
+
+    return {
+        "innings_state": {
+            "score_before": score_before,
+            "wickets_before": wickets_before,
+            "legal_balls_before": legal_balls_before,
+            "current_run_rate": current_run_rate,
+            "required_run_rate": required_run_rate,
+            "target_runs": target_runs,
+            "phase": phase,
+            "wickets_bucket": _bucket_wickets(wickets_before),
+        },
+        "striker_innings": {
+            "runs": int(striker_innings["runs"]),
+            "balls": int(striker_innings["balls"]),
+            "boundaries": int(striker_innings["boundaries"]),
+        },
+        "bowler_innings": {
+            "runs": int(bowler_innings["runs"]),
+            "balls": int(bowler_innings["balls"]),
+            "wickets": int(bowler_innings["wickets"]),
+            "boundaries": int(bowler_innings["boundaries"]),
+        },
+        "batter_history": {
+            "runs": int(batter_hist["runs"]),
+            "balls": int(batter_hist["balls"]),
+            "fours": int(batter_hist["fours"]),
+            "sixes": int(batter_hist["sixes"]),
+            "dots": int(batter_hist["dots"]),
+            "dismissals": int(batter_hist["dismissals"]),
+            "outcomes": _counter_to_probability_payload(batter_counts),
+        },
+        "bowler_history": {
+            "runs_conceded": int(bowler_hist["runs_conceded"]),
+            "legal_balls": int(bowler_hist["legal_balls"]),
+            "wickets": int(bowler_hist["wickets"]),
+            "dots": int(bowler_hist["dots"]),
+            "fours_conceded": int(bowler_hist["fours_conceded"]),
+            "sixes_conceded": int(bowler_hist["sixes_conceded"]),
+            "outcomes": _counter_to_probability_payload(bowler_counts),
+        },
+        "matchup": {
+            "batter": batter,
+            "bowler": bowler,
+            "outcomes": _counter_to_probability_payload(matchup_counts),
+        },
+        "phase_history": _counter_to_probability_payload(phase_counts),
+        "similar_situations": {
+            "definition": "phase + batter type + bowler type",
+            "outcomes": _counter_to_probability_payload(similar_counts),
+        },
+        "recent_deliveries": {
+            "window": len(recent_outcomes),
+            "outcomes": recent_outcomes,
+            "counts": dict(sorted(recent_counter.items())),
+            "distribution": _counter_to_probability_payload(recent_counter),
+        },
+        "recent_form": {
+            "batter_previous_match": batter_prev_match,
+            "bowler_previous_match": bowler_prev_match,
+            "batter_recent_matches": batter_recent,
+            "bowler_recent_matches": bowler_recent,
+        },
+    }
+
+
+def _apply_context_multipliers(probabilities: dict[str, float], contextual_features: dict[str, Any]) -> tuple[dict[str, float], list[str]]:
+    adjusted = dict(probabilities)
+    notes: list[str] = []
+
+    innings_state = contextual_features["innings_state"]
+    striker = contextual_features["striker_innings"]
+    bowler = contextual_features["bowler_innings"]
+    matchup_sample = int(contextual_features["matchup"]["outcomes"]["sample_size"])
+    recent = contextual_features["recent_deliveries"]
+
+    current_rr = float(innings_state["current_run_rate"])
+    required_rr = innings_state.get("required_run_rate")
+    if isinstance(required_rr, (int, float)):
+        pressure_delta = float(required_rr) - current_rr
+        if pressure_delta >= 2.0:
+            adjusted["4"] *= 1.12
+            adjusted["6"] *= 1.10
+            adjusted["wicket"] *= 1.08
+            adjusted["0"] *= 0.92
+            notes.append("Required run rate pressure increased attacking outcomes.")
+        elif pressure_delta <= -1.5:
+            adjusted["0"] *= 1.06
+            adjusted["1"] *= 1.08
+            adjusted["4"] *= 0.95
+            adjusted["6"] *= 0.90
+            notes.append("Chase is ahead of rate, so lower-risk outcomes were favored.")
+
+    striker_balls = int(striker["balls"])
+    striker_runs = int(striker["runs"])
+    if striker_balls >= 6:
+        striker_sr = (striker_runs * 100.0) / striker_balls if striker_balls else 0.0
+        if striker_sr >= 150.0:
+            adjusted["4"] *= 1.08
+            adjusted["6"] *= 1.10
+            notes.append("Striker has started quickly in this innings.")
+        elif striker_sr <= 90.0:
+            adjusted["0"] *= 1.05
+            adjusted["1"] *= 1.04
+            adjusted["wicket"] *= 1.04
+            notes.append("Striker scoring rate is below par in this innings.")
+
+    bowler_balls = int(bowler["balls"])
+    bowler_runs = int(bowler["runs"])
+    if bowler_balls >= 6:
+        econ = bowler_runs / (bowler_balls / 6.0)
+        if econ >= 10.0:
+            adjusted["4"] *= 1.07
+            adjusted["6"] *= 1.06
+            notes.append("Bowler has been expensive in this spell.")
+        elif econ <= 6.0:
+            adjusted["0"] *= 1.06
+            adjusted["wicket"] *= 1.05
+            notes.append("Bowler has controlled scoring in this spell.")
+
+    recent_counts = Counter(recent.get("outcomes", []))
+    if recent_counts.get("4", 0) + recent_counts.get("6", 0) >= 2:
+        adjusted["4"] *= 1.05
+        adjusted["6"] *= 1.05
+        notes.append("Recent boundary momentum was included.")
+    if recent_counts.get("wicket", 0) >= 1:
+        adjusted["wicket"] *= 1.06
+        notes.append("Recent wicket event raised dismissal risk.")
+
+    matchup_probs = contextual_features["matchup"]["outcomes"]["outcome_probabilities"]
+    if matchup_sample >= 20 and matchup_probs.get("wicket", 0.0) >= 0.1:
+        adjusted["wicket"] *= 1.08
+        notes.append("Historical batter vs bowler dismissal rate is elevated.")
+
+    return _normalize_probabilities(adjusted), notes
+
+
+def _feature_snapshot_from_context(context: PredictionContext) -> dict[str, Any]:
+    cf = context.contextual_features
+    innings_state = cf["innings_state"]
+    striker = cf["striker_innings"]
+    bowler = cf["bowler_innings"]
+    matchup = cf["matchup"]["outcomes"]
+    similar = cf["similar_situations"]["outcomes"]
+    recent = cf["recent_deliveries"]
+
+    return {
+        "phase": context.phase,
+        "score_before": innings_state["score_before"],
+        "wickets_before": innings_state["wickets_before"],
+        "legal_balls_before": innings_state["legal_balls_before"],
+        "current_run_rate": innings_state["current_run_rate"],
+        "required_run_rate": innings_state.get("required_run_rate"),
+        "striker_runs": striker["runs"],
+        "striker_balls": striker["balls"],
+        "bowler_spell_runs": bowler["runs"],
+        "bowler_spell_balls": bowler["balls"],
+        "matchup_sample": matchup["sample_size"],
+        "similar_sample": similar["sample_size"],
+        "recent_outcomes": recent.get("outcomes", []),
+    }
+
+
+def _build_prediction_difference(previous_snapshot: dict[str, Any], current_snapshot: dict[str, Any]) -> list[str]:
+    changes: list[str] = []
+    tracked_fields = {
+        "score_before": "Score before delivery",
+        "wickets_before": "Wickets before delivery",
+        "legal_balls_before": "Legal balls faced in innings",
+        "current_run_rate": "Current run rate",
+        "required_run_rate": "Required run rate",
+        "striker_runs": "Striker runs",
+        "striker_balls": "Striker balls",
+        "bowler_spell_runs": "Bowler spell runs",
+        "bowler_spell_balls": "Bowler spell balls",
+        "matchup_sample": "Batter vs bowler evidence sample",
+        "similar_sample": "Comparable situation sample",
+    }
+    for key, label in tracked_fields.items():
+        before = previous_snapshot.get(key)
+        after = current_snapshot.get(key)
+        if before != after:
+            changes.append(f"{label}: {before} -> {after}")
+
+    prev_recent = previous_snapshot.get("recent_outcomes", [])
+    curr_recent = current_snapshot.get("recent_outcomes", [])
+    if prev_recent != curr_recent:
+        changes.append("Recent delivery pattern updated")
+
+    return changes
+
+
+def predict_contextual_from_context(context: PredictionContext) -> dict[str, Any]:
+    baseline = predict_hierarchical_from_count_map(
+        context.feature_values,
+        context.context_count_map,
+        context.global_counts,
+    )
+
+    cf = context.contextual_features
+    matchup_probs = cf["matchup"]["outcomes"]["outcome_probabilities"]
+    matchup_sample = int(cf["matchup"]["outcomes"]["sample_size"])
+    batter_probs = cf["batter_history"]["outcomes"]["outcome_probabilities"]
+    batter_sample = int(cf["batter_history"]["outcomes"]["sample_size"])
+    bowler_probs = cf["bowler_history"]["outcomes"]["outcome_probabilities"]
+    bowler_sample = int(cf["bowler_history"]["outcomes"]["sample_size"])
+    phase_probs = cf["phase_history"]["outcome_probabilities"]
+    phase_sample = int(cf["phase_history"]["sample_size"])
+    similar_probs = cf["similar_situations"]["outcomes"]["outcome_probabilities"]
+    similar_sample = int(cf["similar_situations"]["outcomes"]["sample_size"])
+    recent_probs = cf["recent_deliveries"]["distribution"]["outcome_probabilities"]
+    recent_sample = int(cf["recent_deliveries"]["distribution"]["sample_size"])
+
+    components: list[tuple[str, dict[str, float], float]] = [
+        ("hierarchical_baseline", baseline["outcome_probabilities"], 0.28),
+        ("global_history", _smoothed_probabilities(context.global_counts), 0.10),
+        ("phase_history", phase_probs, min(0.14, 0.14 * (phase_sample / 8000.0))),
+        ("batter_history", batter_probs, min(0.18, 0.18 * (batter_sample / 1600.0))),
+        ("bowler_history", bowler_probs, min(0.16, 0.16 * (bowler_sample / 1600.0))),
+        ("batter_bowler_matchup", matchup_probs, min(0.20, 0.20 * (matchup_sample / 140.0))),
+        ("similar_situations", similar_probs, min(0.14, 0.14 * (similar_sample / 2000.0))),
+        ("recent_innings_window", recent_probs, min(0.08, 0.08 * (recent_sample / 6.0))),
+    ]
+
+    blended_probs, blend_contribution = _weighted_blend(components)
+    adjusted_probs, adjustment_notes = _apply_context_multipliers(blended_probs, cf)
+
+    evidence_sample = int(
+        matchup_sample
+        + similar_sample
+        + min(batter_sample, 400)
+        + min(bowler_sample, 400)
+        + recent_sample
+    )
+    reliability = _compute_reliability(evidence_sample)
+    top = _top_outcome(adjusted_probs)
+
+    looked_at = [
+        "batter historical scoring profile",
+        "bowler historical concession profile",
+        "batter vs bowler matchup",
+        "phase-specific history",
+        "current innings pressure and recent ball pattern",
+        "comparable type/phase situations",
+    ]
+
+    return {
+        "model_version": DEFAULT_RUNTIME_MODEL_VERSION,
+        "chosen_evidence_level": "contextual_blend",
+        "evidence_sample_size": evidence_sample,
+        "reliability": reliability,
+        "outcome_probabilities": adjusted_probs,
+        "predicted_top_outcome": top,
+        "evidence": {
+            "looked_at": looked_at,
+            "comparable_deliveries": similar_sample,
+            "matchup_deliveries": matchup_sample,
+            "blend_contribution": blend_contribution,
+            "adjustment_notes": adjustment_notes,
+        },
+        "feature_snapshot": _feature_snapshot_from_context(context),
+        "debug": {
+            "baseline": baseline,
+            "components": {
+                "matchup_sample": matchup_sample,
+                "batter_sample": batter_sample,
+                "bowler_sample": bowler_sample,
+                "phase_sample": phase_sample,
+                "similar_sample": similar_sample,
+                "recent_sample": recent_sample,
+            },
+        },
+    }
 
 
 class SequentialPredictionSession:
@@ -99,6 +700,7 @@ class SequentialPredictionSession:
         season_id: int,
         match_id: int,
         innings: int,
+        model_version: str = DEFAULT_RUNTIME_MODEL_VERSION,
         start_over_number: int | None = None,
         start_ball_number: int | None = None,
     ) -> None:
@@ -192,6 +794,8 @@ class SequentialPredictionSession:
 
         self.global_counts: Counter[str] | None = None
         self.context_count_map: dict[tuple[str, tuple[Any, ...]], Counter[str]] | None = None
+        self.model_version = model_version
+        self._previous_feature_snapshot: dict[str, Any] | None = None
 
     def total_deliveries(self) -> int:
         return len(self.rows)
@@ -311,11 +915,51 @@ class SequentialPredictionSession:
 
         assert self.global_counts is not None
         assert self.context_count_map is not None
-        baseline = predict_hierarchical_from_count_map(feature_values, self.context_count_map, self.global_counts)
+        contextual_features = _collect_contextual_features(self.conn, row, str(row["timeline_key"]), phase)
+        context = PredictionContext(
+            target=row,
+            target_identity={
+                "season_id": int(row["season_id"]),
+                "match_id": int(row["match_id"]),
+                "innings": int(row["innings"]),
+                "over_number": int(row["over_number"]),
+                "ball_number": int(row["ball_number"]),
+            },
+            timeline_key=str(row["timeline_key"]),
+            legal_balls_before=int(row["legal_balls_before"]),
+            phase=phase,
+            feature_values=feature_values,
+            global_counts=self.global_counts,
+            context_count_map=self.context_count_map,
+            contextual_features=contextual_features,
+        )
 
-        probabilities = baseline["outcome_probabilities"]
-        top = baseline["predicted_top_outcome"]
+        if self.model_version == "baseline_hierarchical_v1":
+            model_payload = predict_hierarchical_from_count_map(feature_values, self.context_count_map, self.global_counts)
+            model_payload["feature_snapshot"] = _feature_snapshot_from_context(context)
+            model_payload["evidence"] = {
+                "looked_at": ["hierarchical batter/bowler/type contexts"],
+                "comparable_deliveries": 0,
+                "matchup_deliveries": int(sum(self.context_count_map.get(("batter_bowler", (row["batter"], row["bowler"])), Counter()).values())),
+                "blend_contribution": [{"source": "hierarchical_baseline", "weight": 1.0}],
+                "adjustment_notes": [],
+            }
+        else:
+            model_payload = predict_contextual_from_context(context)
+
+        probabilities = model_payload["outcome_probabilities"]
+        top = model_payload["predicted_top_outcome"]
         actual = classify_delivery_outcome(row)
+        prediction_difference = None
+        current_snapshot = dict(model_payload.get("feature_snapshot", {}))
+        if self._previous_feature_snapshot is not None:
+            changes = _build_prediction_difference(self._previous_feature_snapshot, current_snapshot)
+            prediction_difference = {
+                "changed_features": changes,
+                "change_detected": len(changes) > 0,
+            }
+        self._previous_feature_snapshot = current_snapshot
+
         return {
             "target_identity": {
                 "season_id": int(row["season_id"]),
@@ -343,12 +987,15 @@ class SequentialPredictionSession:
                 "innings_phase": phase,
             },
             "prediction_timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            "model_version": baseline["model_version"],
-            "chosen_evidence_level": baseline["chosen_evidence_level"],
-            "evidence_sample_size": baseline["evidence_sample_size"],
-            "reliability": baseline["reliability"],
+            "model_version": model_payload["model_version"],
+            "chosen_evidence_level": model_payload["chosen_evidence_level"],
+            "evidence_sample_size": model_payload["evidence_sample_size"],
+            "reliability": model_payload["reliability"],
             "outcome_probabilities": probabilities,
             "predicted_top_outcome": top,
+            "evidence": model_payload.get("evidence", {}),
+            "feature_snapshot": current_snapshot,
+            "prediction_difference": prediction_difference,
             "actual_outcome": actual,
             "top_prediction_correct": top == actual,
         }
@@ -494,6 +1141,7 @@ def build_prediction_context(
         },
         global_counts=global_counts,
         context_count_map=context_count_map,
+        contextual_features=_collect_contextual_features(conn, target, timeline, phase),
     )
 
 
@@ -594,4 +1242,43 @@ def predict_next_ball_baseline(
         "actual_outcome": actual,
         "top_prediction_correct": top == actual,
     }
+
+
+def predict_next_ball(
+    conn: sqlite3.Connection,
+    season_id: int,
+    match_id: int,
+    innings: int,
+    over_number: int,
+    ball_number: int,
+    model_version: str = DEFAULT_RUNTIME_MODEL_VERSION,
+) -> dict[str, Any]:
+    context = build_prediction_context(conn, season_id, match_id, innings, over_number, ball_number)
+    if model_version == "baseline_hierarchical_v1":
+        return predict_next_ball_baseline(conn, season_id, match_id, innings, over_number, ball_number)
+
+    model_payload = predict_contextual_from_context(context)
+    top = model_payload["predicted_top_outcome"]
+    actual = classify_delivery_outcome(context.target)
+
+    return {
+        "target_identity": context.target_identity,
+        "state_identity": {
+            "timeline_key": context.timeline_key,
+            "legal_balls_before": context.legal_balls_before,
+            "innings_phase": context.phase,
+        },
+        "prediction_timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "model_version": model_payload["model_version"],
+        "chosen_evidence_level": model_payload["chosen_evidence_level"],
+        "evidence_sample_size": model_payload["evidence_sample_size"],
+        "reliability": model_payload["reliability"],
+        "outcome_probabilities": model_payload["outcome_probabilities"],
+        "predicted_top_outcome": top,
+        "evidence": model_payload.get("evidence", {}),
+        "feature_snapshot": model_payload.get("feature_snapshot", {}),
+        "actual_outcome": actual,
+        "top_prediction_correct": top == actual,
+    }
+
 
