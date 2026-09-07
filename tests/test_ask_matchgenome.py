@@ -11,7 +11,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from fixture_data import SAMPLE_CSV
-from matchgenomeipl.ask_matchgenome import AskMatchGenomeEngine, QueryExecutor, QueryPlan
+from matchgenomeipl.ask_matchgenome import AskMatchGenomeEngine, QueryExecutor, QueryPlan, QueryPlanValidator
 from matchgenomeipl.database import connect_db, initialize_schema
 from matchgenomeipl.ingestion import ingest_csv_to_sqlite
 
@@ -62,6 +62,43 @@ class AskMatchGenomeTests(unittest.TestCase):
         executor = QueryExecutor(self.conn)
         with self.assertRaises(ValueError):
             executor.execute(QueryPlan(question="x", intent="BAD", entities={}))
+
+    def test_validator_rejects_extra_entity_fields(self) -> None:
+        validator = QueryPlanValidator()
+        with self.assertRaises(ValueError):
+            validator.validate(
+                QueryPlan(
+                    question="x",
+                    intent="PLAYER_SEASON_STAT",
+                    entities={"player": "PlayerA", "season": 2020, "hack": "x"},
+                    metric="runs",
+                )
+            )
+
+    def test_validator_rejects_non_integer_season(self) -> None:
+        validator = QueryPlanValidator()
+        with self.assertRaises(ValueError):
+            validator.validate(
+                QueryPlan(
+                    question="x",
+                    intent="PLAYER_SEASON_STAT",
+                    entities={"player": "PlayerA", "season": "2020"},
+                    metric="runs",
+                )
+            )
+
+    def test_validator_rejects_limit_out_of_range(self) -> None:
+        validator = QueryPlanValidator()
+        with self.assertRaises(ValueError):
+            validator.validate(
+                QueryPlan(
+                    question="x",
+                    intent="RANKING_STAT",
+                    entities={"season": 2020},
+                    metric="runs",
+                    limit=100,
+                )
+            )
 
 
 if __name__ == "__main__":

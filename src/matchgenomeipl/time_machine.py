@@ -31,6 +31,8 @@ class ReplayLedgerEntry:
     target_identity: dict[str, int]
     state_identity: dict[str, Any]
     model_version: str
+    feature_version: str
+    evidence_version: str
     outcome_probabilities: dict[str, float]
     predicted_top_outcome: str
     chosen_evidence_level: str
@@ -120,6 +122,8 @@ class ReplaySession:
             },
             "prediction": {
                 "model_version": raw["model_version"],
+                "feature_version": raw.get("feature_version"),
+                "evidence_version": raw.get("evidence_version"),
                 "chosen_evidence_level": raw["chosen_evidence_level"],
                 "evidence_sample_size": raw["evidence_sample_size"],
                 "reliability": raw["reliability"],
@@ -143,6 +147,8 @@ class ReplaySession:
                 target_identity=dict(raw["target_identity"]),
                 state_identity=dict(raw["state_identity"]),
                 model_version=str(raw["model_version"]),
+                feature_version=str(raw.get("feature_version", "unknown")),
+                evidence_version=str(raw.get("evidence_version", "unknown")),
                 outcome_probabilities=dict(raw["outcome_probabilities"]),
                 predicted_top_outcome=str(raw["predicted_top_outcome"]),
                 chosen_evidence_level=str(raw["chosen_evidence_level"]),

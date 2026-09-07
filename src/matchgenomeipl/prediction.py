@@ -21,6 +21,8 @@ HIERARCHICAL_CONTEXTS = [
 ]
 
 DEFAULT_RUNTIME_MODEL_VERSION = "contextual_hybrid_v1"
+DEFAULT_FEATURE_VERSION = "context_features_v1"
+DEFAULT_EVIDENCE_VERSION = "evidence_contract_v1"
 
 
 def _smoothed_probabilities(counts: Counter[str], alpha: float = 1.0) -> dict[str, float]:
@@ -666,6 +668,8 @@ def predict_contextual_from_context(context: PredictionContext) -> dict[str, Any
 
     return {
         "model_version": DEFAULT_RUNTIME_MODEL_VERSION,
+        "feature_version": DEFAULT_FEATURE_VERSION,
+        "evidence_version": DEFAULT_EVIDENCE_VERSION,
         "chosen_evidence_level": "contextual_blend",
         "evidence_sample_size": evidence_sample,
         "reliability": reliability,
@@ -988,6 +992,8 @@ class SequentialPredictionSession:
             },
             "prediction_timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "model_version": model_payload["model_version"],
+            "feature_version": model_payload.get("feature_version", DEFAULT_FEATURE_VERSION),
+            "evidence_version": model_payload.get("evidence_version", DEFAULT_EVIDENCE_VERSION),
             "chosen_evidence_level": model_payload["chosen_evidence_level"],
             "evidence_sample_size": model_payload["evidence_sample_size"],
             "reliability": model_payload["reliability"],
@@ -1149,6 +1155,8 @@ def predict_global_baseline_from_counts(global_counts: Counter[str]) -> dict[str
     probabilities = probabilities_from_counts(global_counts)
     return {
         "model_version": "baseline_global_v1",
+        "feature_version": "baseline_features_v1",
+        "evidence_version": "baseline_evidence_v1",
         "chosen_evidence_level": "global",
         "evidence_sample_size": int(sum(global_counts.values())),
         "outcome_probabilities": probabilities,
@@ -1160,6 +1168,8 @@ def predict_phase_baseline_from_counts(phase_counts: Counter[str], phase: str) -
     probabilities = probabilities_from_counts(phase_counts)
     return {
         "model_version": "baseline_phase_v1",
+        "feature_version": "baseline_features_v1",
+        "evidence_version": "baseline_evidence_v1",
         "chosen_evidence_level": f"phase:{phase}",
         "evidence_sample_size": int(sum(phase_counts.values())),
         "outcome_probabilities": probabilities,
@@ -1197,6 +1207,8 @@ def predict_hierarchical_from_count_map(
 
     return {
         "model_version": "baseline_hierarchical_v1",
+        "feature_version": "baseline_features_v1",
+        "evidence_version": "baseline_evidence_v1",
         "chosen_evidence_level": chosen_level,
         "evidence_sample_size": sample_size,
         "reliability": reliability,
@@ -1234,6 +1246,8 @@ def predict_next_ball_baseline(
         },
         "prediction_timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "model_version": baseline["model_version"],
+        "feature_version": baseline["feature_version"],
+        "evidence_version": baseline["evidence_version"],
         "chosen_evidence_level": baseline["chosen_evidence_level"],
         "evidence_sample_size": baseline["evidence_sample_size"],
         "reliability": baseline["reliability"],
@@ -1270,6 +1284,8 @@ def predict_next_ball(
         },
         "prediction_timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "model_version": model_payload["model_version"],
+        "feature_version": model_payload.get("feature_version", DEFAULT_FEATURE_VERSION),
+        "evidence_version": model_payload.get("evidence_version", DEFAULT_EVIDENCE_VERSION),
         "chosen_evidence_level": model_payload["chosen_evidence_level"],
         "evidence_sample_size": model_payload["evidence_sample_size"],
         "reliability": model_payload["reliability"],
