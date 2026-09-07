@@ -9,7 +9,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from matchgenomeipl.database import connect_db, initialize_schema
-from matchgenomeipl.enrichment import run_cricsheet_enrichment
+from matchgenomeipl.enrichment import run_cricsheet_enrichment, run_reference_knowledge_enrichment
 
 
 def main() -> None:
@@ -17,10 +17,11 @@ def main() -> None:
     conn = connect_db(db_path)
     try:
         initialize_schema(conn)
-        stats = run_cricsheet_enrichment(conn, ROOT, force_refresh=False)
+        cricsheet_stats = run_cricsheet_enrichment(conn, ROOT, force_refresh=False)
+        knowledge_stats = run_reference_knowledge_enrichment(conn)
     finally:
         conn.close()
-    print(stats)
+    print({"cricsheet": cricsheet_stats, "knowledge": knowledge_stats})
 
 
 if __name__ == "__main__":

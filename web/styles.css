@@ -29,10 +29,10 @@ body {
 .app {
   max-width: 1480px;
   margin: 0 auto;
-  padding: 18px;
+  padding: 14px;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 14px;
+  gap: 10px;
   height: 100vh;
   min-height: 0;
 }
@@ -49,7 +49,7 @@ body {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 14px;
+  padding: 12px;
 }
 
 .top-shell {
@@ -95,7 +95,21 @@ body {
   display: grid;
   gap: 12px;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
+}
+
+/* Hidden sections/panels must stay collapsed regardless of layout class rules. */
+.view[hidden],
+.workspace-panel[hidden],
+.player-tab-panel[hidden],
+#replayPanel[hidden],
+#playerPanel[hidden] {
+  display: none !important;
+}
+
+/* Keep native hidden semantics even when component classes set display. */
+[hidden] {
+  display: none !important;
 }
 
 .headline {
@@ -117,6 +131,8 @@ body {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .launch-card h3,
@@ -193,7 +209,7 @@ button:disabled {
 .time-machine-layout,
 .player-layout {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
 }
 
@@ -226,6 +242,10 @@ button:disabled {
   height: 100%;
 }
 
+.player-layout {
+  grid-template-columns: 1fr;
+}
+
 .discovery-pane,
 .workspace-pane,
 .player-search-pane,
@@ -236,10 +256,14 @@ button:disabled {
   min-height: 0;
 }
 
-.discovery-pane,
-.player-search-pane {
+.discovery-pane {
   grid-template-rows: auto auto auto auto auto auto auto minmax(0, 1fr) auto;
   overflow: hidden;
+}
+
+.player-search-pane {
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  overflow: auto;
 }
 
 .workspace-pane,
@@ -248,8 +272,18 @@ button:disabled {
   overflow: hidden;
 }
 
+.hero-card,
+.ask-results {
+  min-height: 0;
+  overflow: auto;
+}
+
 .workspace-pane {
   grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+#askInput {
+  min-height: 132px;
 }
 
 .match-cards {
@@ -328,7 +362,7 @@ button:disabled {
 }
 
 #panelPrediction {
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  grid-template-columns: 1fr;
   align-content: start;
 }
 
@@ -505,6 +539,10 @@ button:disabled {
   min-width: 0;
 }
 
+.fixtures-search-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+}
+
 .search-row button {
   justify-self: start;
 }
@@ -514,6 +552,38 @@ button:disabled {
   overflow: auto;
   display: grid;
   gap: 7px;
+}
+
+.search-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.search-result > span,
+.search-result > small {
+  white-space: nowrap;
+}
+
+.search-result > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ask-answer-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.ask-answer-grid .kv {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ask-answer-grid .kv strong {
+  color: #d6e2ff;
 }
 
 .player-hero {
@@ -526,8 +596,23 @@ button:disabled {
   gap: 12px;
 }
 
+.player-hero > div {
+  min-width: 0;
+}
+
 .player-tabs {
   margin: 2px 0;
+}
+
+.fixture-card {
+  width: 100%;
+  text-align: left;
+}
+
+.player-profile-pane #playerPanel {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
 }
 
 .player-tab-panel {
@@ -658,6 +743,10 @@ button:disabled {
 
   .hero-result {
     font-size: 1.3rem;
+  }
+
+  .player-hero {
+    grid-template-columns: 1fr;
   }
 
   .prob-row {

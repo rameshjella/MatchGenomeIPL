@@ -11,6 +11,7 @@ from selenium.webdriver import ActionChains
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
@@ -83,6 +84,22 @@ class VisualQaRunner:
         self._save("02_ask")
         self._check_overflow("ask")
 
+        for nav_id, view_id, shot in [
+            ("goFixturesBtn", "fixturesView", "02a_fixtures"),
+            ("goResultsBtn", "resultsView", "02b_results"),
+            ("goTeamsBtn", "teamsView", "02c_teams"),
+            ("goStatsBtn", "statsView", "02d_stats"),
+        ]:
+            btn = self.driver.find_element(By.ID, nav_id)
+            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+            self.driver.execute_script("arguments[0].click();", btn)
+            self.wait.until(lambda d, target=view_id: not d.find_element(By.ID, target).get_attribute("hidden"))
+            self._save(shot)
+            self._check_overflow(shot)
+
+        self.driver.find_element(By.ID, "goAskBtn").click()
+        self.wait.until(lambda d: not d.find_element(By.ID, "askView").get_attribute("hidden"))
+
         ask_input = self.driver.find_element(By.ID, "askInput")
         ask_input.clear()
         ask_input.send_keys("How many sixes did MS Dhoni hit in 2014?")
@@ -96,7 +113,18 @@ class VisualQaRunner:
         ask_input.clear()
         ask_input.send_keys("What was the humidity in that match?")
         self.driver.find_element(By.ID, "askSubmitBtn").click()
-        self.wait.until(lambda d: "Unsupported" in d.find_element(By.ID, "askResults").text or "could not map" in d.find_element(By.ID, "askResults").text)
+        self.wait.until(
+            lambda d: any(
+                token in d.find_element(By.ID, "askResults").text
+                for token in (
+                    "Unsupported",
+                    "could not map",
+                    "does not currently have verified information",
+                    "does not currently have a verified knowledge path",
+                    "Need clarification",
+                )
+            )
+        )
         self._save("04_ask_empty_or_error")
 
         tm_btn = self.driver.find_element(By.ID, "goTimeMachineBtn")
@@ -116,6 +144,7 @@ class VisualQaRunner:
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", cards[0])
         self.driver.execute_script("arguments[0].click();", cards[0])
         self.wait.until(lambda d: d.find_element(By.ID, "inningsSelect").get_attribute("value") is not None)
+        self.wait.until(lambda d: d.find_element(By.ID, "startReplayBtn").is_enabled())
         self._save("06_match_selected")
         self._check_overflow("discovery")
 
@@ -127,8 +156,17 @@ class VisualQaRunner:
 
         predict_btn = self.driver.find_element(By.ID, "predictBtn")
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", predict_btn)
-        self.driver.execute_script("arguments[0].click();", predict_btn)
-        self.wait.until(lambda d: d.find_element(By.ID, "predictedTop").text.strip() not in {"", "-"})
+        prediction_ready = False
+        for _ in range(3):
+            self.driver.execute_script("arguments[0].click();", predict_btn)
+            try:
+                self.wait.until(lambda d: d.find_element(By.ID, "predictedTop").text.strip() not in {"", "-"})
+                prediction_ready = True
+                break
+            except TimeoutException:
+                continue
+        if not prediction_ready:
+            raise TimeoutException("Predict action did not produce a visible prediction.")
         self._save("08_before_ball_prediction")
         self._check_overflow("prediction")
 
@@ -183,11 +221,11 @@ class VisualQaRunner:
         self._check_overflow("player_overview")
 
         for tab_id, shot in [
-            ("playerTabBattingBtn", "12_player_batting"),
-            ("playerTabBowlingBtn", "13_player_bowling"),
-            ("playerTabMatchupsBtn", "14_player_matchups"),
-            ("playerTabSeasonsBtn", "15_player_seasons"),
-            ("playerTabPhasesBtn", "16_player_phases"),
+            ("playerTabBattingBtn", "15_player_batting"),
+            ("playerTabBowlingBtn", "16_player_bowling"),
+            ("playerTabMatchupsBtn", "17_player_matchups"),
+            ("playerTabSeasonsBtn", "18_player_seasons"),
+            ("playerTabPhasesBtn", "19_player_phases"),
         ]:
             nodes = self.driver.find_elements(By.ID, tab_id)
             if nodes and nodes[0].is_displayed():
@@ -207,11 +245,11 @@ class VisualQaRunner:
         batter_btn.click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "playerView")))
         self.wait.until(lambda d: d.find_element(By.ID, "playerPanel").is_displayed())
-        self._save("17_match_to_player_navigation")
+        self._save("20_match_to_player_navigation")
 
         self.driver.find_element(By.ID, "backToReplayBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "timeMachineView")))
-        self._save("18_player_to_match_navigation")
+        self._save("21_player_to_match_navigation")
 
         # Keyboard focus progression sanity check.
         body = self.driver.find_element(By.TAG_NAME, "body")

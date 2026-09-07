@@ -40,6 +40,7 @@ ALLOWED_OPERATIONS = {
     "points_table",
     "team_season_info",
     "top_performers",
+    "prediction_info",
 }
 
 
@@ -92,15 +93,7 @@ class SemanticResolver:
         self.player_aliases = self._build_player_aliases()
         self.team_aliases = self._build_team_aliases()
         self.player_activity = self._build_player_activity()
-        self.player_name_hints = {
-            "virat": "kohli",
-            "rohit": "sharma",
-            "jasprit": "bumrah",
-            "bumrah": "bumrah",
-            "dhoni": "dhoni",
-            "mahi": "dhoni",
-            "msd": "dhoni",
-        }
+        self.player_knowledge_rank = self._build_player_knowledge_rank()
 
     def _build_metric_registry(self) -> dict[str, MetricDefinition]:
         defs = [
@@ -135,7 +128,6 @@ class SemanticResolver:
         return [t for t in re.split(r"\s+", SemanticResolver._normalize_text(text)) if t]
 
     def _build_player_aliases(self) -> dict[str, list[str]]:
-        rows = self.conn.execute("SELECT player_name FROM players ORDER BY player_name").fetchall()
         alias_map: dict[str, list[str]] = {}
 
         def normalize_player_name(raw: str) -> str | None:
@@ -163,6 +155,7 @@ class SemanticResolver:
             if player not in bucket:
                 bucket.append(player)
 
+        rows = self.conn.execute("SELECT player_name FROM players ORDER BY player_name").fetchall()
         for row in rows:
             maybe_player = normalize_player_name(str(row["player_name"]))
             if maybe_player is None:
@@ -185,6 +178,16 @@ class SemanticResolver:
                 add(f"{first[0]} {surname}", player)
                 if len(first) >= 2:
                     add(f"{first}{surname[0]}", player)
+
+        # Prefer curated/enriched identity aliases when available.
+        try:
+            rows = self.conn.execute(
+                "SELECT alias_name, canonical_player_name FROM player_identity_alias ORDER BY canonical_player_name"
+            ).fetchall()
+            for row in rows:
+                add(str(row["alias_name"]), str(row["canonical_player_name"]))
+        except sqlite3.Error:
+            pass
         return alias_map
 
     def _build_team_aliases(self) -> dict[str, str]:
@@ -236,6 +239,43 @@ class SemanticResolver:
             player = str(row["player"])
             activity[player] = activity.get(player, 0) + int(row["appearances"])
         return activity
+
+    def _build_player_knowledge_rank(self) -> dict[str, float]:
+        rank: dict[str, float] = {}
+        try:
+            rows = self.conn.execute(
+                "SELECT canonical_player_name, verification_status FROM player_knowledge"
+            ).fetchall()
+        except sqlite3.Error:
+            return rank
+        for row in rows:
+            player = str(row["canonical_player_name"])
+            status = str(row["verification_status"] or "").strip().lower()
+            if status == "verified":
+                rank[player] = 16.0
+            elif status == "provisional":
+                rank[player] = 10.0
+            elif status == "derived":
+                rank[player] = 3.0
+            else:
+                rank[player] = 0.0
+        return rank
+
+    @staticmethod
+    def _alias_specificity(alias: str) -> float:
+        token_count = len(alias.split())
+        if token_count >= 2:
+            return 14.0
+        return 8.0 if len(alias) >= 5 else 3.0
+
+    def _score_player_candidate(self, lowered_query: str, candidate: str) -> float:
+        score = min(self.player_activity.get(candidate, 0), 6000) / 220.0
+        candidate_tokens = self._tokenize(candidate)
+        query_tokens = set(lowered_query.split())
+        overlap = len(query_tokens.intersection(candidate_tokens))
+        score += overlap * 18.0
+        score += self.player_knowledge_rank.get(candidate, 0.0)
+        return score
 
     def extract_season(self, text: str) -> int | None:
         m = re.search(r"\b(20\d{2})\b", self._normalize_text(text))
@@ -344,15 +384,14 @@ class SemanticResolver:
         lowered = self._normalize_text(text)
         tokens = lowered.split()
 
+        # Surname-only references with many collisions should not auto-resolve.
         for token in tokens:
-            hinted_surname = self.player_name_hints.get(token)
-            if hinted_surname is None:
+            token_candidates = self.player_aliases.get(token, [])
+            if len(token_candidates) < 2:
                 continue
-            hinted_candidates = self.player_aliases.get(hinted_surname, [])
-            if not hinted_candidates:
-                continue
-            ranked_hint = sorted(hinted_candidates, key=lambda p: self.player_activity.get(p, 0), reverse=True)
-            return EntityResolution(ranked_hint[0], ranked_hint[:6], False)
+            surname_candidates = [p for p in token_candidates if self._tokenize(p) and self._tokenize(p)[-1] == token]
+            if len(surname_candidates) >= 3:
+                return EntityResolution(None, surname_candidates[:6], True)
 
         # Prefer explicit "firstname surname" -> first-initial + surname resolution when unique.
         for i in range(len(tokens) - 1):
@@ -385,11 +424,21 @@ class SemanticResolver:
         if len(candidates) == 1:
             return EntityResolution(candidates[0], candidates, False)
 
-        ranked = sorted(candidates, key=lambda p: self.player_activity.get(p, 0), reverse=True)
+        score_map: dict[str, float] = {}
+        for width in (3, 2, 1):
+            for i in range(len(tokens) - width + 1):
+                alias = " ".join(tokens[i : i + width])
+                for player in self.player_aliases.get(alias, []):
+                    score_map[player] = score_map.get(player, 0.0) + self._alias_specificity(alias)
+
+        ranked = sorted(
+            candidates,
+            key=lambda player: (-(score_map.get(player, 0.0) + self._score_player_candidate(lowered, player)), player),
+        )
         if len(ranked) >= 2:
-            best = self.player_activity.get(ranked[0], 0)
-            next_best = self.player_activity.get(ranked[1], 0)
-            if best >= 100 and best >= (next_best * 2):
+            best_score = score_map.get(ranked[0], 0.0) + self._score_player_candidate(lowered, ranked[0])
+            next_score = score_map.get(ranked[1], 0.0) + self._score_player_candidate(lowered, ranked[1])
+            if best_score >= 24.0 and best_score >= next_score + 12.0:
                 return EntityResolution(ranked[0], ranked, False)
         return EntityResolution(None, candidates[:6], True)
 
@@ -480,8 +529,35 @@ class RuleBasedPlanProvider:
         if team_resolution.value:
             entities["team"] = team_resolution.value
 
-        if len(all_players) >= 2 and ("compare" in lowered or "between" in lowered):
-            entities["players"] = all_players[:2]
+        if "compare" in lowered or "between" in lowered:
+            compare_match = re.search(r"(?:compare|between)\s+(.+?)\s+(?:and|vs|versus|with)\s+(.+)", lowered)
+            if compare_match:
+                left_resolution = semantic.resolve_player(compare_match.group(1))
+                right_resolution = semantic.resolve_player(compare_match.group(2))
+                if left_resolution.ambiguous or right_resolution.ambiguous:
+                    candidates = (left_resolution.candidates + right_resolution.candidates)[:6]
+                    return QueryPlan(
+                        question=raw,
+                        operation="clarify",
+                        entity="player",
+                        entities={"candidates": candidates, "reason": "ambiguous_player_compare"},
+                    )
+                if left_resolution.value and right_resolution.value and left_resolution.value != right_resolution.value:
+                    entities["players"] = [left_resolution.value, right_resolution.value]
+            if "players" not in entities and len(all_players) >= 2:
+                dedup_players: list[str] = []
+                for player in all_players:
+                    if player not in dedup_players:
+                        dedup_players.append(player)
+                if len(dedup_players) >= 2:
+                    entities["players"] = dedup_players[:2]
+                else:
+                    return QueryPlan(
+                        question=raw,
+                        operation="clarify",
+                        entity="player",
+                        entities={"candidates": dedup_players, "reason": "ambiguous_player_compare"},
+                    )
         elif player_resolution.ambiguous:
             return QueryPlan(
                 question=raw,
@@ -500,9 +576,9 @@ class RuleBasedPlanProvider:
 
         # Player knowledge domain (bio-data and identity attributes).
         bio_attr = None
-        if "full name" in lowered:
+        if "full name" in lowered or "complete name" in lowered:
             bio_attr = "full_name"
-        elif "born" in lowered or "date of birth" in lowered:
+        elif "born" in lowered or "date of birth" in lowered or "dob" in lowered:
             bio_attr = "date_of_birth"
         elif "wife" in lowered or "spouse" in lowered:
             bio_attr = "spouse_name"
@@ -530,7 +606,7 @@ class RuleBasedPlanProvider:
                 filters=dict(entities),
             )
 
-        if "captain" in lowered or "coach" in lowered or "owner" in lowered:
+        if "captain" in lowered or "coach" in lowered or "owner" in lowered or "owned" in lowered:
             if "team" not in entities:
                 return None
             if season is None:
@@ -551,6 +627,18 @@ class RuleBasedPlanProvider:
                 filters=dict(entities),
             )
 
+        if "next ball" in lowered or "prediction change" in lowered or "likely to happen" in lowered:
+            metric = "prediction_change" if "prediction change" in lowered else "next_ball"
+            return QueryPlan(
+                question=raw,
+                operation="prediction_info",
+                entity="prediction",
+                entities=entities,
+                metric=metric,
+                metrics=[metric],
+                filters=dict(entities),
+            )
+
         if "fixture" in lowered or "fixtures" in lowered:
             return QueryPlan(
                 question=raw,
@@ -561,7 +649,7 @@ class RuleBasedPlanProvider:
                 limit=semantic.extract_limit(lowered, default=10),
             )
 
-        if "result" in lowered or "results" in lowered:
+        if "result" in lowered or "results" in lowered or "completed matches" in lowered:
             return QueryPlan(
                 question=raw,
                 operation="results",
@@ -904,7 +992,7 @@ class QueryPlanValidator:
         if plan.operation == "clarify":
             return
 
-        if plan.operation in {"knowledge_lookup", "fixtures", "results", "points_table", "team_season_info", "top_performers"}:
+        if plan.operation in {"knowledge_lookup", "fixtures", "results", "points_table", "team_season_info", "top_performers", "prediction_info"}:
             return
 
         metric_names = set(self.semantic.metric_registry.keys())
@@ -1633,6 +1721,22 @@ class QueryExecutor:
             },
         }
 
+    def _prediction_info(self, plan: QueryPlan) -> dict[str, Any]:
+        metric = str(plan.metric or "next_ball")
+        if metric == "prediction_change":
+            label = "Prediction changes when pre-ball state changes (score, wickets, striker, bowler, pressure, or recent pattern)."
+        else:
+            label = "Next-ball probability requires an active Time Machine replay context. Start replay and ask again for the current ball."
+        return {
+            "value": None,
+            "label": label,
+            "evidence": {
+                "interpretation": "prediction guidance",
+                "requested_metric": metric,
+                "source_tables": ["deliveries", "replay_session"],
+            },
+        }
+
     def execute(self, plan: QueryPlan) -> dict[str, Any]:
         if plan.operation == "clarify":
             reason = str(plan.entities.get("reason", "ambiguous_entity"))
@@ -1673,6 +1777,9 @@ class QueryExecutor:
 
         if plan.operation == "top_performers" and plan.entity == "top_performers":
             return self._top_performers(plan)
+
+        if plan.operation == "prediction_info" and plan.entity == "prediction":
+            return self._prediction_info(plan)
 
         if plan.operation == "rank":
             return self._rank(plan)

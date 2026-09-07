@@ -78,6 +78,12 @@ class AskMatchGenomeTests(unittest.TestCase):
         self.assertGreaterEqual(payload["sub_questions"], 2)
         self.assertGreaterEqual(payload["answered"], 2)
 
+    def test_compare_uses_two_distinct_players(self) -> None:
+        payload = self.engine.ask("Compare PlayerA and PlayerB in 2020")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        players = payload["results"][0]["query_plan"]["entities"].get("players", [])
+        self.assertEqual(players, ["PlayerA", "PlayerB"])
+
     def test_batter_run_rate_maps_to_strike_rate(self) -> None:
         payload = self.engine.ask("PlayerA run rate in 2020")
         self.assertEqual(payload["results"][0]["status"], "ok")
@@ -111,6 +117,34 @@ class AskMatchGenomeTests(unittest.TestCase):
         self.assertEqual(fx["results"][0]["status"], "ok")
         self.assertEqual(rs["results"][0]["status"], "ok")
         self.assertEqual(pt["results"][0]["status"], "ok")
+
+    def test_prediction_guidance_questions_are_supported(self) -> None:
+        payload = self.engine.ask("What is likely to happen on the next ball?")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertEqual(payload["results"][0]["query_plan"]["operation"], "prediction_info")
+
+    def test_low_signal_alias_collision_requires_clarification(self) -> None:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO player_knowledge(canonical_player_name, source_key, source_url, retrieved_at, verification_status) VALUES ('AA Patel', 'test_fixture', NULL, CURRENT_TIMESTAMP, 'derived')"
+        )
+        self.conn.execute(
+            "INSERT OR IGNORE INTO player_knowledge(canonical_player_name, source_key, source_url, retrieved_at, verification_status) VALUES ('PP Patel', 'test_fixture', NULL, CURRENT_TIMESTAMP, 'derived')"
+        )
+        self.conn.execute("INSERT OR IGNORE INTO players(player_name) VALUES ('AA Patel')")
+        self.conn.execute("INSERT OR IGNORE INTO players(player_name) VALUES ('PP Patel')")
+        self.conn.execute(
+            "INSERT INTO player_identity_alias(alias_name, canonical_player_name, source_key, source_url, retrieved_at, verification_status) VALUES (?, ?, 'test_fixture', NULL, CURRENT_TIMESTAMP, 'derived')",
+            ("patel", "AA Patel"),
+        )
+        self.conn.execute(
+            "INSERT INTO player_identity_alias(alias_name, canonical_player_name, source_key, source_url, retrieved_at, verification_status) VALUES (?, ?, 'test_fixture', NULL, CURRENT_TIMESTAMP, 'derived')",
+            ("patel", "PP Patel"),
+        )
+        self.conn.commit()
+        self.engine = AskMatchGenomeEngine(self.conn)
+
+        payload = self.engine.ask("Show Patel best season")
+        self.assertEqual(payload["results"][0]["status"], "clarification_needed")
 
     def test_executor_rejects_non_select_sql(self) -> None:
         with self.assertRaises(ValueError):

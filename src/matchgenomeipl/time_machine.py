@@ -313,6 +313,43 @@ class TimeMachineService:
         if row is None:
             raise ValueError("team not found")
         season = team_season_info(self.conn, team_name, season_id) if isinstance(season_id, int) else None
+
+        squad_params: list[Any] = [team_name, team_name]
+        season_sql = ""
+        if isinstance(season_id, int):
+            season_sql = " AND d.season_id = ?"
+            squad_params = [team_name, season_id, team_name, season_id]
+        squad_rows = self._fetchall(
+            "get_team_squad",
+            f"""
+            WITH touches AS (
+                SELECT d.batter AS player,
+                       COUNT(*) AS balls_faced,
+                       SUM(d.batter_runs) AS runs,
+                       0 AS wickets
+                FROM deliveries d
+                WHERE d.team_batting = ? {season_sql}
+                GROUP BY d.batter
+                UNION ALL
+                SELECT d.bowler AS player,
+                       0 AS balls_faced,
+                       0 AS runs,
+                       SUM(CASE WHEN d.is_wicket = 1 THEN 1 ELSE 0 END) AS wickets
+                FROM deliveries d
+                WHERE d.team_bowling = ? {season_sql}
+                GROUP BY d.bowler
+            )
+            SELECT player,
+                   SUM(balls_faced) AS balls,
+                   SUM(runs) AS runs,
+                   SUM(wickets) AS wickets
+            FROM touches
+            GROUP BY player
+            ORDER BY balls DESC, runs DESC, wickets DESC, player
+            LIMIT 30
+            """,
+            tuple(squad_params),
+        )
         return {
             "team": {
                 "name": row["canonical_team_name"],
@@ -327,6 +364,15 @@ class TimeMachineService:
                 "verification_status": row["verification_status"],
             },
             "season": season,
+            "squad": [
+                {
+                    "player": r["player"],
+                    "balls": int(r["balls"]),
+                    "runs": int(r["runs"]),
+                    "wickets": int(r["wickets"]),
+                }
+                for r in squad_rows
+            ],
         }
 
     def get_points_table(self, season_id: int) -> list[dict[str, Any]]:

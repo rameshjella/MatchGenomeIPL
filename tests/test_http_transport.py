@@ -154,6 +154,8 @@ class HttpTransportTests(unittest.TestCase):
         status, team = self._get("/api/teams/Team1?season_id=2020")
         self.assertEqual(status, 200)
         self.assertEqual(team["season"]["captain"], "Captain One")
+        self.assertIn("squad", team)
+        self.assertTrue(isinstance(team["squad"], list))
 
         status, table = self._get("/api/stats/points-table?season_id=2020")
         self.assertEqual(status, 200)

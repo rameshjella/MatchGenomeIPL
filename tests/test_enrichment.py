@@ -15,7 +15,7 @@ if str(SRC) not in sys.path:
 
 from fixture_data import SAMPLE_CSV
 from matchgenomeipl.database import connect_db, initialize_schema
-from matchgenomeipl.enrichment import run_cricsheet_enrichment
+from matchgenomeipl.enrichment import run_cricsheet_enrichment, run_reference_knowledge_enrichment
 from matchgenomeipl.ingestion import ingest_csv_to_sqlite
 from matchgenomeipl.time_machine import TimeMachineService
 
@@ -103,6 +103,28 @@ class EnrichmentTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(team_row)
         self.assertEqual(team_row["current_canonical_name"], "Punjab Kings")
+
+    def test_reference_knowledge_enrichment_populates_player_and_team_season(self) -> None:
+        stats = run_reference_knowledge_enrichment(self.conn)
+        self.assertGreaterEqual(stats["players_upserted"], 4)
+        self.assertGreaterEqual(stats["team_seasons_upserted"], 3)
+
+        dhoni = self.conn.execute(
+            "SELECT full_name, verification_status, source_key FROM player_knowledge WHERE canonical_player_name = ?",
+            ("MS Dhoni",),
+        ).fetchone()
+        self.assertIsNotNone(dhoni)
+        self.assertEqual(dhoni["full_name"], "Mahendra Singh Dhoni")
+        self.assertEqual(dhoni["verification_status"], "provisional")
+        self.assertEqual(dhoni["source_key"], "matchgenome_reference_knowledge_v1")
+
+        team_season = self.conn.execute(
+            "SELECT captain, coach, owner, verification_status FROM team_season_knowledge WHERE canonical_team_name = ? AND season_id = ?",
+            ("Mumbai Indians", 2024),
+        ).fetchone()
+        self.assertIsNotNone(team_season)
+        self.assertEqual(team_season["captain"], "Hardik Pandya")
+        self.assertEqual(team_season["verification_status"], "provisional")
 
 
 if __name__ == "__main__":

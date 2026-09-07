@@ -17,7 +17,6 @@
         <nav class="mode-nav" aria-label="Product navigation">
           <button id="goHomeBtn" type="button" class="primary">Home</button>
           <button id="goFixturesBtn" type="button">Fixtures</button>
-          <button id="goResultsBtn" type="button">Results</button>
           <button id="goTeamsBtn" type="button">Teams</button>
           <button id="goStatsBtn" type="button">Stats</button>
           <button id="goTimeMachineBtn" type="button">Time Machine</button>
@@ -63,7 +62,7 @@
             <h2>Ask MatchGenome</h2>
             <p class="muted">Ask MatchGenome anything about IPL</p>
             <label class="sr-only" for="askInput">Question</label>
-            <textarea id="askInput" rows="3" placeholder="How many sixes did Dhoni hit in 2014?"></textarea>
+            <textarea id="askInput" rows="5" placeholder="How many sixes did Dhoni hit in 2014?"></textarea>
             <div class="row-actions">
               <button id="askSubmitBtn" class="primary" type="button">Ask</button>
             </div>
@@ -83,27 +82,21 @@
 
       <section id="fixturesView" class="view" hidden>
         <section class="hero-card">
-          <h2>Fixtures</h2>
-          <p class="muted">Upcoming and scheduled IPL fixtures from verified match metadata.</p>
-          <div class="search-row">
+          <h2>Fixtures and Results</h2>
+          <p class="muted">Unified match listing. Click any match to inspect details and open it in Time Machine.</p>
+          <div class="search-row fixtures-search-row">
             <select id="fixturesSeasonSelect"></select>
             <input id="fixturesTeamInput" type="search" placeholder="Filter team" />
+            <select id="fixturesStatusSelect">
+              <option value="">All</option>
+              <option value="upcoming">Upcoming</option>
+              <option value="scheduled">Scheduled</option>
+              <option value="completed">Completed</option>
+            </select>
             <button id="fixturesRefreshBtn" type="button">Refresh</button>
           </div>
           <div id="fixturesList" class="panel-block">Fixtures will appear here.</div>
-        </section>
-      </section>
-
-      <section id="resultsView" class="view" hidden>
-        <section class="hero-card">
-          <h2>Results</h2>
-          <p class="muted">Completed IPL match outcomes with winner, margin, and venue.</p>
-          <div class="search-row">
-            <select id="resultsSeasonSelect"></select>
-            <input id="resultsTeamInput" type="search" placeholder="Filter team" />
-            <button id="resultsRefreshBtn" type="button">Refresh</button>
-          </div>
-          <div id="resultsList" class="panel-block">Results will appear here.</div>
+          <div id="fixtureDetail" class="panel-block">Click a match card to inspect match details.</div>
         </section>
       </section>
 

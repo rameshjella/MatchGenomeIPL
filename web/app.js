@@ -52,7 +52,6 @@ const els = {
   homeView: document.getElementById("homeView"),
   askView: document.getElementById("askView"),
   fixturesView: document.getElementById("fixturesView"),
-  resultsView: document.getElementById("resultsView"),
   teamsView: document.getElementById("teamsView"),
   statsView: document.getElementById("statsView"),
   timeMachineView: document.getElementById("timeMachineView"),
@@ -62,7 +61,6 @@ const els = {
 
   goHomeBtn: document.getElementById("goHomeBtn"),
   goFixturesBtn: document.getElementById("goFixturesBtn"),
-  goResultsBtn: document.getElementById("goResultsBtn"),
   goTeamsBtn: document.getElementById("goTeamsBtn"),
   goStatsBtn: document.getElementById("goStatsBtn"),
   goTimeMachineBtn: document.getElementById("goTimeMachineBtn"),
@@ -81,13 +79,10 @@ const els = {
 
   fixturesSeasonSelect: document.getElementById("fixturesSeasonSelect"),
   fixturesTeamInput: document.getElementById("fixturesTeamInput"),
+  fixturesStatusSelect: document.getElementById("fixturesStatusSelect"),
   fixturesRefreshBtn: document.getElementById("fixturesRefreshBtn"),
   fixturesList: document.getElementById("fixturesList"),
-
-  resultsSeasonSelect: document.getElementById("resultsSeasonSelect"),
-  resultsTeamInput: document.getElementById("resultsTeamInput"),
-  resultsRefreshBtn: document.getElementById("resultsRefreshBtn"),
-  resultsList: document.getElementById("resultsList"),
+  fixtureDetail: document.getElementById("fixtureDetail"),
 
   teamsSelect: document.getElementById("teamsSelect"),
   teamSeasonSelect: document.getElementById("teamSeasonSelect"),
@@ -204,6 +199,9 @@ function parseRoute() {
   return {
     view: params.get("view") || "home",
     player: params.get("player") || "",
+    seasonId: params.get("season_id") || "",
+    matchId: params.get("match_id") || "",
+    status: params.get("status") || "",
   };
 }
 
@@ -272,7 +270,6 @@ function setView(view) {
     home: els.homeView,
     ask: els.askView,
     fixtures: els.fixturesView,
-    results: els.resultsView,
     teams: els.teamsView,
     stats: els.statsView,
     time_machine: els.timeMachineView,
@@ -286,7 +283,6 @@ function setView(view) {
   const nav = [
     [els.goHomeBtn, view === "home"],
     [els.goFixturesBtn, view === "fixtures"],
-    [els.goResultsBtn, view === "results"],
     [els.goTeamsBtn, view === "teams"],
     [els.goStatsBtn, view === "stats"],
     [els.goTimeMachineBtn, view === "time_machine"],
@@ -302,34 +298,68 @@ function setView(view) {
 
 function formatMatchCard(item) {
   const winner = item.winner ? `Winner: ${item.winner}` : "Winner: pending";
+  const matchId = Number(item.match_id || 0);
   return `
-    <div class='panel-block'>
+    <button class='panel-block fixture-card' type='button' data-match-id='${matchId}'>
       <p><strong>${teamLabel(item.team_a, "Team A")} vs ${teamLabel(item.team_b, "Team B")}</strong></p>
       <p class='muted'>IPL ${item.season_id} · Match ${item.match_number || "-"} · ${item.match_date || "Date unknown"}</p>
       <p class='muted'>${item.venue || "Venue unknown"}${item.city ? `, ${item.city}` : ""}</p>
       <p class='muted'>${item.status} · ${winner}</p>
-    </div>
+    </button>
   `;
 }
 
 async function loadFixtures() {
   const season = Number(els.fixturesSeasonSelect.value || 0);
   const team = (els.fixturesTeamInput.value || "").trim();
+  const status = (els.fixturesStatusSelect.value || "").trim();
   const q = [`season_id=${season}`];
   if (team) q.push(`team=${encodeURIComponent(team)}`);
+  if (status) q.push(`status=${encodeURIComponent(status)}`);
   const payload = await api.get(`/api/fixtures?${q.join("&")}`);
   const rows = payload.fixtures || [];
-  els.fixturesList.innerHTML = rows.length ? rows.map(formatMatchCard).join("") : "<p class='muted'>No fixtures found for this filter.</p>";
+  els.fixturesList.innerHTML = rows.length ? rows.map(formatMatchCard).join("") : "<p class='muted'>No matches found for this filter.</p>";
+  els.fixturesList.querySelectorAll(".fixture-card").forEach((node) => {
+    node.addEventListener("click", () => {
+      const matchId = Number(node.getAttribute("data-match-id") || 0);
+      if (!matchId) return;
+      const seasonId = Number(els.fixturesSeasonSelect.value || 0);
+      const status = (els.fixturesStatusSelect.value || "").trim();
+      loadFixtureDetail(matchId).catch((err) => setStatus(err.message || "Failed to load match details.", "error"));
+      setRoute({ view: "fixtures", season_id: seasonId || "", match_id: matchId, status });
+    });
+  });
 }
 
-async function loadResults() {
-  const season = Number(els.resultsSeasonSelect.value || 0);
-  const team = (els.resultsTeamInput.value || "").trim();
-  const q = [`season_id=${season}`];
-  if (team) q.push(`team=${encodeURIComponent(team)}`);
-  const payload = await api.get(`/api/results?${q.join("&")}`);
-  const rows = payload.results || [];
-  els.resultsList.innerHTML = rows.length ? rows.map(formatMatchCard).join("") : "<p class='muted'>No results found for this filter.</p>";
+async function loadFixtureDetail(matchId) {
+  const [match, innings] = await Promise.all([
+    api.get(`/api/matches/${matchId}`),
+    api.get(`/api/matches/${matchId}/innings`),
+  ]);
+  const meta = match.metadata || {};
+  const outcome = meta.outcome || {};
+  const toss = meta.toss || {};
+  const inningsRows = (innings.innings || [])
+    .map((item) => `<li>Innings ${item.innings}: ${teamLabel(item.team_batting, "Team")} ${item.runs}/${item.wickets} in ${toOverNotation(item.legal_balls)} overs</li>`)
+    .join("");
+  els.fixtureDetail.innerHTML = `
+    <h4>${teamLabel(meta.team_a_display, "Team A")} vs ${teamLabel(meta.team_b_display, "Team B")}</h4>
+    <p class='muted'>IPL ${match.season_id} · Match ${meta.match_number || "-"} · ${meta.match_date || "Date unknown"}</p>
+    <p>${meta.venue || "Venue unknown"}${meta.city ? `, ${meta.city}` : ""}</p>
+    <p>Toss: ${teamLabel(toss.winner, "Unknown")} (${toss.decision || "-"})</p>
+    <p>Result: ${teamLabel(outcome.winner, "Pending")} ${outcome.result_margin ? `by ${outcome.result_margin} ${outcome.result_type || ""}` : ""}</p>
+    <p>Player of match: ${outcome.player_of_match || "-"}</p>
+    <ul>${inningsRows || "<li>No innings data found.</li>"}</ul>
+    <div class='row-actions'>
+      <button type='button' class='primary' id='openFixtureInTimeMachineBtn'>Open in Time Machine</button>
+    </div>
+  `;
+  const btn = document.getElementById("openFixtureInTimeMachineBtn");
+  if (btn) {
+    btn.addEventListener("click", () => {
+      setRoute({ view: "time_machine", season_id: match.season_id, match_id: matchId });
+    });
+  }
 }
 
 async function loadTeams() {
@@ -346,11 +376,18 @@ async function loadTeamDetails() {
   const payload = await api.get(`/api/teams/${encodeURIComponent(team)}?season_id=${season}`);
   const info = payload.team || {};
   const seasonInfo = payload.season || {};
+  const squad = Array.isArray(payload.squad) ? payload.squad : [];
   els.teamDetails.innerHTML = `
     <p><strong>${info.name || team}</strong></p>
     <p class='muted'>Short: ${info.short_name || "-"} · Home: ${info.home_venue || "-"}</p>
     <p>Season ${season}: Captain ${seasonInfo.captain || "Unknown"}, Coach ${seasonInfo.coach || "Unknown"}, Owner ${seasonInfo.owner || "Unknown"}</p>
     <p class='muted'>Source: ${seasonInfo.source || info.source || "-"} · Verification: ${seasonInfo.verification_status || info.verification_status || "-"}</p>
+    <h4>Squad snapshot</h4>
+    ${squad.length
+      ? `<div class='table-wrap'><table class='mini-table'><thead><tr><th>Player</th><th>Balls</th><th>Runs</th><th>Wickets</th></tr></thead><tbody>${squad
+          .map((row) => `<tr><td>${row.player}</td><td>${row.balls}</td><td>${row.runs}</td><td>${row.wickets}</td></tr>`)
+          .join("")}</tbody></table></div>`
+      : "<p class='muted'>No squad sample for this season/team.</p>"}
   `;
 }
 
@@ -387,6 +424,26 @@ function setReplayTab(tab) {
     btn.classList.toggle("active", active);
     panel.hidden = !active;
   });
+}
+
+async function selectMatchInTimeMachine(seasonId, matchId) {
+  const season = Number(seasonId || 0);
+  const match = Number(matchId || 0);
+  if (!season || !match) return;
+  const seasonExists = state.seasons.some((x) => Number(x.season_id) === season);
+  if (!seasonExists) return;
+  if (Number(els.seasonSelect.value) !== season) {
+    els.seasonSelect.value = String(season);
+    await loadMatches();
+  }
+  state.selectedMatch = state.matches.find((m) => Number(m.match_id) === match) || null;
+  state.selectedMatchId = state.selectedMatch ? Number(state.selectedMatch.match_id) : null;
+  renderMatchCards();
+  if (state.selectedMatch) {
+    const first = state.selectedMatch;
+    els.selectedMatchMeta.textContent = `${matchTitleFromMeta(first)} · IPL ${first.season_id} · Match ${first.match_number || first.season_match_number || "-"} · Match ID ${first.match_id}`;
+    await loadInnings();
+  }
 }
 
 function setPlayerTab(tab) {
@@ -937,13 +994,69 @@ function formatAskValue(value) {
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return `<p><strong>${value}</strong></p>`;
   }
+
+  const prettyKey = (key) =>
+    String(key || "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+
+  const scalar = (item) => {
+    if (item === null || item === undefined) return "-";
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") return String(item);
+    return null;
+  };
+
+  const formatObject = (obj) => {
+    const entries = Object.entries(obj || {});
+    if (!entries.length) return "<p class='muted'>No details available.</p>";
+    return `<div class='ask-answer-grid'>${entries
+      .slice(0, 12)
+      .map(([key, raw]) => {
+        const valueText = scalar(raw);
+        if (valueText !== null) {
+          return `<p class='kv'><strong>${prettyKey(key)}:</strong> <span>${valueText}</span></p>`;
+        }
+        if (Array.isArray(raw)) {
+          return `<div><p><strong>${prettyKey(key)}:</strong></p><ul>${raw
+            .slice(0, 8)
+            .map((v) => `<li>${scalar(v) ?? JSON.stringify(v)}</li>`)
+            .join("")}</ul></div>`;
+        }
+        return `<div><p><strong>${prettyKey(key)}:</strong></p>${formatObject(raw)}</div>`;
+      })
+      .join("")}</div>`;
+  };
+
   if (Array.isArray(value)) {
+    if (!value.length) return "<p class='muted'>No rows available.</p>";
     return `<ul>${value
       .slice(0, 8)
-      .map((item) => `<li>${typeof item === "object" ? JSON.stringify(item) : String(item)}</li>`)
+      .map((item) => {
+        const text = scalar(item);
+        return `<li>${text !== null ? text : formatObject(item)}</li>`;
+      })
       .join("")}</ul>`;
   }
-  return `<pre>${JSON.stringify(value, null, 2)}</pre>`;
+  return formatObject(value);
+}
+
+function formatPlanFilters(filters) {
+  const items = Object.entries(filters || {});
+  if (!items.length) return "No filters";
+  return items
+    .map(([key, value]) => {
+      const pretty = String(key).replace(/_/g, " ");
+      return `${pretty}: ${Array.isArray(value) ? value.join(", ") : String(value)}`;
+    })
+    .join(" · ");
+}
+
+function formatResolutionEntities(entities) {
+  const items = Object.entries(entities || {}).filter(([, value]) => value !== null && value !== undefined && value !== "");
+  if (!items.length) return "No explicit entity resolution details.";
+  return `<ul>${items
+    .map(([key, value]) => `<li><strong>${String(key).replace(/_/g, " ")}:</strong> ${Array.isArray(value) ? value.join(", ") : String(value)}</li>`)
+    .join("")}</ul>`;
 }
 
 function maybePlayerFromAsk(result) {
@@ -956,6 +1069,13 @@ function maybePlayerFromAsk(result) {
   if (value && typeof value.batter === "string") return value.batter;
   if (value && typeof value.player_of_match === "string") return value.player_of_match;
   return null;
+}
+
+function isCleanPlayerName(name) {
+  const value = String(name || "").trim();
+  if (!value) return false;
+  if (value.startsWith("[") || value.includes("',") || value.includes(", '")) return false;
+  return true;
 }
 
 function renderAskResults(payload) {
@@ -984,9 +1104,9 @@ function renderAskResults(payload) {
         <p class='muted'>Evidence</p>
         <p>${item.result?.label || "Answer from local IPL data."}</p>
         <p class='muted'>${evidence.source || "MatchGenome IPL database"} · ${evidence.scope || ""}</p>
-        <p class='muted'>Filters used: ${JSON.stringify((item.query_plan && item.query_plan.filters) || {})}</p>
+        <p class='muted'>Filters used: ${formatPlanFilters((item.query_plan && item.query_plan.filters) || {})}</p>
         ${player ? `<div class='row-actions'><button type='button' class='ask-player-link' data-player='${player}'>Open Player Intelligence</button></div>` : ""}
-        <details><summary>Resolution details</summary><pre>${JSON.stringify((item.query_plan && item.query_plan.entities) || {}, null, 2)}</pre></details>
+        <details><summary>Resolution details</summary>${formatResolutionEntities((item.query_plan && item.query_plan.entities) || {})}</details>
       </article>`;
     })
     .join("");
@@ -1022,7 +1142,7 @@ async function searchPlayers() {
 
   els.playerSearchHint.textContent = "Searching players...";
   const payload = await api.get(`/api/players?query=${encodeURIComponent(q)}&limit=20`);
-  const list = payload.players || [];
+  const list = (payload.players || []).filter((item) => isCleanPlayerName(item.player_name));
 
   if (!list.length) {
     els.playerSearchResults.innerHTML = "";
@@ -1217,18 +1337,22 @@ function syncRoute() {
 
   if (route.view === "fixtures") {
     setView("fixtures");
+    if (route.seasonId) {
+      els.fixturesSeasonSelect.value = String(route.seasonId);
+    }
+    if (route.status) {
+      els.fixturesStatusSelect.value = String(route.status);
+    }
+    if (route.matchId) {
+      loadFixtureDetail(Number(route.matchId)).catch((err) => setStatus(err.message || "Failed to load match details", "error"));
+    }
     loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error"));
-    return;
-  }
-
-  if (route.view === "results") {
-    setView("results");
-    loadResults().catch((err) => setStatus(err.message || "Failed to load results", "error"));
     return;
   }
 
   if (route.view === "teams") {
     setView("teams");
+    loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error"));
     return;
   }
 
@@ -1240,6 +1364,12 @@ function syncRoute() {
 
   if (route.view === "time_machine") {
     setView("time_machine");
+    selectMatchInTimeMachine(route.seasonId, route.matchId).catch((err) => setStatus(err.message || "Failed to load match", "error"));
+    return;
+  }
+
+  if (route.view === "results") {
+    setRoute({ view: "fixtures", status: "completed" });
     return;
   }
 
@@ -1254,7 +1384,6 @@ function syncRoute() {
 function attachEvents() {
   els.goHomeBtn.addEventListener("click", () => setRoute({ view: "home" }));
   els.goFixturesBtn.addEventListener("click", () => setRoute({ view: "fixtures" }));
-  els.goResultsBtn.addEventListener("click", () => setRoute({ view: "results" }));
   els.goTeamsBtn.addEventListener("click", () => setRoute({ view: "teams" }));
   els.goStatsBtn.addEventListener("click", () => setRoute({ view: "stats" }));
   els.goTimeMachineBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
@@ -1269,9 +1398,14 @@ function attachEvents() {
   els.askSubmitBtn.addEventListener("click", () => runAsk().catch((err) => setStatus(err.message || "Ask failed.", "error")));
 
   els.fixturesRefreshBtn.addEventListener("click", () => loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error")));
-  els.resultsRefreshBtn.addEventListener("click", () => loadResults().catch((err) => setStatus(err.message || "Failed to load results", "error")));
+  els.fixturesSeasonSelect.addEventListener("change", () => loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error")));
+  els.fixturesStatusSelect.addEventListener("change", () => loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error")));
+  els.fixturesTeamInput.addEventListener("input", () => loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error")));
   els.teamLoadBtn.addEventListener("click", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
+  els.teamsSelect.addEventListener("change", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
+  els.teamSeasonSelect.addEventListener("change", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
   els.statsRefreshBtn.addEventListener("click", () => loadStatsWorkspace().catch((err) => setStatus(err.message || "Failed to load stats", "error")));
+  els.statsSeasonSelect.addEventListener("change", () => loadStatsWorkspace().catch((err) => setStatus(err.message || "Failed to load stats", "error")));
   els.askInput.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       runAsk().catch((err) => setStatus(err.message || "Ask failed.", "error"));
@@ -1337,10 +1471,13 @@ async function bootstrap() {
     await loadMatches();
     await loadInnings();
     await loadTeams();
-    [els.fixturesSeasonSelect, els.resultsSeasonSelect, els.statsSeasonSelect, els.teamSeasonSelect].forEach((node) => {
+    [els.fixturesSeasonSelect, els.statsSeasonSelect, els.teamSeasonSelect].forEach((node) => {
       node.innerHTML = "";
       state.seasons.forEach((s) => node.appendChild(option(`Season ${s.season_id}`, s.season_id)));
     });
+    if (els.fixturesStatusSelect) {
+      els.fixturesStatusSelect.value = "";
+    }
     attachEvents();
     setReplayTab("prediction");
     setPlayerTab("overview");

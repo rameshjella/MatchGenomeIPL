@@ -12,6 +12,99 @@ import zipfile
 CRICSHEET_SOURCE_KEY = "cricsheet_ipl_json"
 CRICSHEET_SOURCE_URL = "https://cricsheet.org/downloads/ipl_json.zip"
 ENRICHMENT_VERSION = "enrichment_v1"
+KNOWLEDGE_SOURCE_KEY = "matchgenome_reference_knowledge_v1"
+KNOWLEDGE_SOURCE_URL = "https://www.iplt20.com/"
+ALLOWED_VERIFICATION_STATES = {"verified", "provisional", "derived", "unverified"}
+
+PLAYER_KNOWLEDGE_SEED: list[dict[str, Any]] = [
+    {
+        "canonical_player_name": "MS Dhoni",
+        "full_name": "Mahendra Singh Dhoni",
+        "date_of_birth": "1981-07-07",
+        "nationality": "India",
+        "role": "Wicket-keeper batter",
+        "batting_style": "Right-handed",
+        "bowling_style": "Right-arm medium",
+        "spouse_name": "Sakshi Dhoni",
+        "children_count": 1,
+        "source_url": "https://en.wikipedia.org/wiki/MS_Dhoni",
+        "verification_status": "provisional",
+        "aliases": ["ms dhoni", "m s dhoni", "mahendra singh dhoni", "msd", "mahi", "dhoni"],
+    },
+    {
+        "canonical_player_name": "V Kohli",
+        "full_name": "Virat Kohli",
+        "date_of_birth": "1988-11-05",
+        "nationality": "India",
+        "role": "Top-order batter",
+        "batting_style": "Right-handed",
+        "bowling_style": "Right-arm medium",
+        "spouse_name": "Anushka Sharma",
+        "children_count": 2,
+        "source_url": "https://en.wikipedia.org/wiki/Virat_Kohli",
+        "verification_status": "provisional",
+        "aliases": ["virat kohli", "virat", "kohli"],
+    },
+    {
+        "canonical_player_name": "RG Sharma",
+        "full_name": "Rohit Gurunath Sharma",
+        "date_of_birth": "1987-04-30",
+        "nationality": "India",
+        "role": "Top-order batter",
+        "batting_style": "Right-handed",
+        "bowling_style": "Right-arm offbreak",
+        "spouse_name": "Ritika Sajdeh",
+        "children_count": 1,
+        "source_url": "https://en.wikipedia.org/wiki/Rohit_Sharma",
+        "verification_status": "provisional",
+        "aliases": ["rohit sharma", "rohit", "sharma", "hitman"],
+    },
+    {
+        "canonical_player_name": "JJ Bumrah",
+        "full_name": "Jasprit Jasbirsingh Bumrah",
+        "date_of_birth": "1993-12-06",
+        "nationality": "India",
+        "role": "Bowler",
+        "batting_style": "Right-handed",
+        "bowling_style": "Right-arm fast",
+        "source_url": "https://en.wikipedia.org/wiki/Jasprit_Bumrah",
+        "verification_status": "provisional",
+        "aliases": ["jasprit bumrah", "jasprit", "bumrah"],
+    },
+]
+
+TEAM_SEASON_KNOWLEDGE_SEED: list[dict[str, Any]] = [
+    {
+        "canonical_team_name": "Mumbai Indians",
+        "season_id": 2024,
+        "captain": "Hardik Pandya",
+        "coach": "Mark Boucher",
+        "owner": "Indiawin Sports",
+        "home_venue": "Wankhede Stadium",
+        "source_url": "https://www.iplt20.com/teams/mumbai-indians",
+        "verification_status": "provisional",
+    },
+    {
+        "canonical_team_name": "Royal Challengers Bengaluru",
+        "season_id": 2016,
+        "captain": "Virat Kohli",
+        "coach": "Daniel Vettori",
+        "owner": "United Spirits",
+        "home_venue": "M Chinnaswamy Stadium",
+        "source_url": "https://www.iplt20.com/teams/royal-challengers-bengaluru",
+        "verification_status": "provisional",
+    },
+    {
+        "canonical_team_name": "Mumbai Indians",
+        "season_id": 2013,
+        "captain": "Rohit Sharma",
+        "coach": "John Wright",
+        "owner": "Indiawin Sports",
+        "home_venue": "Wankhede Stadium",
+        "source_url": "https://www.iplt20.com/teams/mumbai-indians",
+        "verification_status": "provisional",
+    },
+]
 
 # Current canonical naming for active IPL franchise identities.
 CURRENT_CANONICAL_BY_HISTORICAL = {
@@ -45,6 +138,21 @@ SHORT_NAME_BY_HISTORICAL = {
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_alias(value: str | None) -> str:
+    if value is None:
+        return ""
+    alias = str(value).lower().replace(".", " ").replace("'", " ")
+    alias = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in alias)
+    return " ".join(alias.split())
+
+
+def _require_verification_state(value: str, field_name: str) -> str:
+    state = str(value or "").strip().lower()
+    if state not in ALLOWED_VERIFICATION_STATES:
+        raise ValueError(f"Invalid {field_name}: {value}")
+    return state
 
 
 def _normalize_name(value: str | None) -> str:
@@ -510,4 +618,238 @@ def run_cricsheet_enrichment(
         )
         conn.commit()
         return stats
+
+
+def run_reference_knowledge_enrichment(conn: sqlite3.Connection) -> dict[str, Any]:
+    fetched_at = _utc_now()
+    conn.execute(
+        """
+        INSERT INTO enrichment_source(source_key, source_name, source_url, source_type, source_version, status, last_checked_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_key) DO UPDATE SET
+            source_name = excluded.source_name,
+            source_url = excluded.source_url,
+            source_type = excluded.source_type,
+            source_version = excluded.source_version,
+            status = excluded.status,
+            last_checked_at = excluded.last_checked_at
+        """,
+        (
+            KNOWLEDGE_SOURCE_KEY,
+            "MatchGenome reference knowledge",
+            KNOWLEDGE_SOURCE_URL,
+            "curated_reference",
+            ENRICHMENT_VERSION,
+            "running",
+            fetched_at,
+        ),
+    )
+
+    run_id = str(uuid4())
+    conn.execute(
+        """
+        INSERT INTO enrichment_run(run_id, source_key, started_at, status)
+        VALUES (?, ?, ?, ?)
+        """,
+        (run_id, KNOWLEDGE_SOURCE_KEY, fetched_at, "running"),
+    )
+
+    player_rows = 0
+    alias_rows = 0
+    team_rows = 0
+    team_season_rows = 0
+
+    for row in PLAYER_KNOWLEDGE_SEED:
+        canonical = str(row["canonical_player_name"]).strip()
+        if not canonical:
+            continue
+        verification = _require_verification_state(str(row.get("verification_status", "provisional")), "player verification_status")
+        conn.execute(
+            """
+            INSERT INTO player_knowledge(
+                canonical_player_name,
+                full_name,
+                date_of_birth,
+                nationality,
+                role,
+                batting_style,
+                bowling_style,
+                biography,
+                spouse_name,
+                children_count,
+                source_key,
+                source_url,
+                retrieved_at,
+                verification_status,
+                notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(canonical_player_name) DO UPDATE SET
+                full_name = COALESCE(excluded.full_name, player_knowledge.full_name),
+                date_of_birth = COALESCE(excluded.date_of_birth, player_knowledge.date_of_birth),
+                nationality = COALESCE(excluded.nationality, player_knowledge.nationality),
+                role = COALESCE(excluded.role, player_knowledge.role),
+                batting_style = COALESCE(excluded.batting_style, player_knowledge.batting_style),
+                bowling_style = COALESCE(excluded.bowling_style, player_knowledge.bowling_style),
+                biography = COALESCE(excluded.biography, player_knowledge.biography),
+                spouse_name = COALESCE(excluded.spouse_name, player_knowledge.spouse_name),
+                children_count = COALESCE(excluded.children_count, player_knowledge.children_count),
+                source_key = excluded.source_key,
+                source_url = excluded.source_url,
+                retrieved_at = excluded.retrieved_at,
+                verification_status = excluded.verification_status,
+                notes = COALESCE(excluded.notes, player_knowledge.notes)
+            """,
+            (
+                canonical,
+                row.get("full_name"),
+                row.get("date_of_birth"),
+                row.get("nationality"),
+                row.get("role"),
+                row.get("batting_style"),
+                row.get("bowling_style"),
+                row.get("biography"),
+                row.get("spouse_name"),
+                row.get("children_count"),
+                KNOWLEDGE_SOURCE_KEY,
+                row.get("source_url"),
+                fetched_at,
+                verification,
+                "Curated reference seed; verify externally before promoting to verified.",
+            ),
+        )
+        player_rows += 1
+
+        raw_aliases = row.get("aliases") if isinstance(row.get("aliases"), list) else []
+        aliases = {canonical, str(row.get("full_name") or "")} | {str(a) for a in raw_aliases}
+        for alias in aliases:
+            normalized_alias = _normalize_alias(alias)
+            if not normalized_alias:
+                continue
+            conn.execute(
+                """
+                INSERT INTO player_identity_alias(
+                    alias_name,
+                    canonical_player_name,
+                    source_key,
+                    source_url,
+                    retrieved_at,
+                    verification_status
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(alias_name, canonical_player_name) DO UPDATE SET
+                    source_key = excluded.source_key,
+                    source_url = excluded.source_url,
+                    retrieved_at = excluded.retrieved_at,
+                    verification_status = excluded.verification_status
+                """,
+                (
+                    normalized_alias,
+                    canonical,
+                    KNOWLEDGE_SOURCE_KEY,
+                    row.get("source_url"),
+                    fetched_at,
+                    verification,
+                ),
+            )
+            alias_rows += 1
+
+    team_names = {str(item["canonical_team_name"]).strip() for item in TEAM_SEASON_KNOWLEDGE_SEED if str(item.get("canonical_team_name", "")).strip()}
+    for team in sorted(team_names):
+        conn.execute(
+            """
+            INSERT INTO team_knowledge(
+                canonical_team_name,
+                source_key,
+                source_url,
+                retrieved_at,
+                verification_status,
+                notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(canonical_team_name) DO UPDATE SET
+                source_key = excluded.source_key,
+                source_url = excluded.source_url,
+                retrieved_at = excluded.retrieved_at,
+                verification_status = excluded.verification_status,
+                notes = excluded.notes
+            """,
+            (
+                team,
+                KNOWLEDGE_SOURCE_KEY,
+                KNOWLEDGE_SOURCE_URL,
+                fetched_at,
+                "provisional",
+                "Team row maintained for season-specific leadership records.",
+            ),
+        )
+        team_rows += 1
+
+    conn.execute("DELETE FROM team_season_knowledge WHERE source_key = ?", (KNOWLEDGE_SOURCE_KEY,))
+    for row in TEAM_SEASON_KNOWLEDGE_SEED:
+        team = str(row.get("canonical_team_name", "")).strip()
+        season = int(row.get("season_id", 0) or 0)
+        if not team or season <= 0:
+            continue
+        verification = _require_verification_state(str(row.get("verification_status", "provisional")), "team season verification_status")
+        conn.execute(
+            """
+            INSERT INTO team_season_knowledge(
+                canonical_team_name,
+                season_id,
+                captain,
+                coach,
+                owner,
+                home_venue,
+                source_key,
+                source_url,
+                retrieved_at,
+                verification_status,
+                notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                team,
+                season,
+                row.get("captain"),
+                row.get("coach"),
+                row.get("owner"),
+                row.get("home_venue"),
+                KNOWLEDGE_SOURCE_KEY,
+                row.get("source_url") or KNOWLEDGE_SOURCE_URL,
+                fetched_at,
+                verification,
+                "Curated season leadership snapshot.",
+            ),
+        )
+        team_season_rows += 1
+
+    stats = {
+        "run_id": run_id,
+        "players_upserted": player_rows,
+        "aliases_upserted": alias_rows,
+        "teams_upserted": team_rows,
+        "team_seasons_upserted": team_season_rows,
+    }
+
+    conn.execute(
+        """
+        UPDATE enrichment_run
+        SET finished_at = ?, status = ?, stats_json = ?
+        WHERE run_id = ?
+        """,
+        (_utc_now(), "success", json.dumps(stats, sort_keys=True), run_id),
+    )
+    conn.execute(
+        """
+        UPDATE enrichment_source
+        SET status = ?, last_checked_at = ?, last_successful_run_id = ?
+        WHERE source_key = ?
+        """,
+        ("ready", _utc_now(), run_id, KNOWLEDGE_SOURCE_KEY),
+    )
+    conn.commit()
+    return stats
+
 

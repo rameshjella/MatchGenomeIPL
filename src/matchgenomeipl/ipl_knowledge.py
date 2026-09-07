@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ast
 from datetime import date
 import re
 import sqlite3
@@ -18,11 +19,56 @@ def _today_iso() -> str:
     return date.today().isoformat()
 
 
+def _verification_rank(status: str | None) -> int:
+    value = (status or "").strip().lower()
+    if value == "verified":
+        return 3
+    if value == "provisional":
+        return 2
+    if value == "derived":
+        return 1
+    return 0
+
+
+def _player_activity_map(conn: sqlite3.Connection) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in conn.execute("SELECT batter AS player, COUNT(*) AS c FROM deliveries GROUP BY batter").fetchall():
+        counts[str(row["player"])] = int(row["c"])
+    for row in conn.execute("SELECT bowler AS player, COUNT(*) AS c FROM deliveries GROUP BY bowler").fetchall():
+        player = str(row["player"])
+        counts[player] = counts.get(player, 0) + int(row["c"])
+    return counts
+
+
+def _normalize_player_name_for_identity(raw: str) -> str | None:
+    value = raw.strip()
+    if not value:
+        return None
+    if value.startswith("[") and value.endswith("]"):
+        try:
+            parsed = ast.literal_eval(value)
+        except Exception:
+            return None
+        if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], str):
+            value = parsed[0].strip()
+        else:
+            return None
+    if "'," in value or value.startswith("["):
+        return None
+    return value
+
+
 def ensure_knowledge_bootstrap(conn: sqlite3.Connection) -> None:
     # Canonical rows for known players in dataset; facts remain empty until verified enrichment writes them.
+    conn.execute("DELETE FROM player_identity_alias WHERE source_key = 'dataset_players' AND canonical_player_name LIKE '[%'")
+    conn.execute("DELETE FROM player_knowledge WHERE source_key = 'dataset_players' AND canonical_player_name LIKE '[%'")
+
     players = conn.execute("SELECT player_name FROM players ORDER BY player_name").fetchall()
     for row in players:
-        player = str(row["player_name"])
+        normalized_player = _normalize_player_name_for_identity(str(row["player_name"]))
+        if normalized_player is None:
+            continue
+        player = normalized_player
         conn.execute(
             """
             INSERT INTO player_knowledge(
@@ -99,34 +145,47 @@ def resolve_player_identity(conn: sqlite3.Connection, query: str) -> tuple[str |
     if not normalized:
         return None, []
 
-    exact = conn.execute(
+    activity = _player_activity_map(conn)
+    token_set = set(normalized.split())
+    rows = conn.execute(
         """
-        SELECT canonical_player_name
+        SELECT alias_name, canonical_player_name, verification_status
         FROM player_identity_alias
-        WHERE alias_name = ?
-        ORDER BY canonical_player_name
+        WHERE alias_name = ? OR alias_name LIKE ?
         """,
-        (normalized,),
+        (normalized, f"%{normalized}%"),
     ).fetchall()
-    if len(exact) == 1:
-        return str(exact[0]["canonical_player_name"]), [str(exact[0]["canonical_player_name"])]
-    if len(exact) > 1:
-        return None, [str(r["canonical_player_name"]) for r in exact[:8]]
+    if not rows:
+        return None, []
 
-    fuzzy = conn.execute(
-        """
-        SELECT canonical_player_name
-        FROM player_identity_alias
-        WHERE alias_name LIKE ?
-        GROUP BY canonical_player_name
-        ORDER BY COUNT(*) DESC, canonical_player_name
-        LIMIT 8
-        """,
-        (f"%{normalized}%",),
-    ).fetchall()
-    if len(fuzzy) == 1:
-        return str(fuzzy[0]["canonical_player_name"]), [str(fuzzy[0]["canonical_player_name"])]
-    return None, [str(r["canonical_player_name"]) for r in fuzzy]
+    ranked: dict[str, float] = {}
+    for row in rows:
+        alias = _norm(str(row["alias_name"]))
+        canonical = str(row["canonical_player_name"])
+        score = float(_verification_rank(row["verification_status"]) * 25)
+        if alias == normalized:
+            score += 120.0
+        elif alias.startswith(normalized):
+            score += 35.0
+        elif normalized in alias:
+            score += 18.0
+
+        canonical_tokens = set(_norm(canonical).split())
+        overlap = len(token_set & canonical_tokens)
+        score += overlap * 16.0
+        score += min(activity.get(canonical, 0), 5000) / 250.0
+        ranked[canonical] = max(ranked.get(canonical, 0.0), score)
+
+    ordered = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
+    candidates = [name for name, _ in ordered[:8]]
+    if len(ordered) == 1:
+        return ordered[0][0], candidates
+
+    top_score = ordered[0][1]
+    second_score = ordered[1][1]
+    if top_score >= 130.0 and top_score >= second_score + 24.0:
+        return ordered[0][0], candidates
+    return None, candidates
 
 
 @dataclass(frozen=True)
