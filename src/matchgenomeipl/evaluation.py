@@ -27,6 +27,35 @@ BASE_MODELS = ("global", "phase", "matchgenome_hierarchical")
 MIXTURE_MODEL = "calibrated_mixture"
 TIME_DECAYED_MIXTURE_MODEL = "time_decayed_mixture"
 
+FEATURE_FAMILIES: dict[str, str] = {
+    "A": "batter_history",
+    "B": "bowler_history",
+    "C": "batter_x_bowler",
+    "D": "batter_type",
+    "E": "bowler_type",
+    "F": "phase",
+    "G": "venue",
+    "H": "batting_team",
+    "I": "bowling_team",
+    "J": "opponent",
+    "K": "current_score",
+    "L": "current_run_rate",
+    "M": "required_run_rate",
+    "N": "wickets_remaining",
+    "O": "balls_remaining",
+    "P": "recent_deliveries",
+    "Q": "current_innings_batter_form",
+    "R": "current_bowler_spell",
+    "S": "recent_player_form",
+    "T": "venue_specific_form",
+    "U": "team_specific_form",
+    "V": "partnership",
+    "W": "similar_historical_situations",
+    "X": "match_context",
+    "Y": "toss_context",
+    "Z": "season_context",
+}
+
 
 def _blend_candidate(components: list[tuple[dict[str, float], float]]) -> dict[str, float]:
     total = sum(weight for _, weight in components if weight > 0.0)
@@ -39,6 +68,225 @@ def _blend_candidate(components: list[tuple[dict[str, float], float]]) -> dict[s
         for label in OUTCOME_LABELS:
             raw[label] += (weight / total) * probs[label]
     return _normalize_probabilities(raw)
+
+
+def _apply_family_adjustment(base: dict[str, float], family: str, context: dict[str, Any]) -> tuple[dict[str, float], bool]:
+    adjusted = dict(base)
+    innings_state = context["innings_state"]
+    striker = context["striker_innings"]
+    bowler = context["bowler_innings"]
+    recent = context["recent_deliveries"]
+    recent_state = context["recent_match_state"]
+    partnership = context["partnership"]
+    recent_form = context["recent_form"]
+
+    if family == "K":
+        score = int(innings_state.get("score_before", 0))
+        balls = max(1, int(innings_state.get("legal_balls_before", 0)))
+        rr = (score * 6.0) / balls
+        if rr >= 9.0:
+            adjusted["4"] *= 1.06
+            adjusted["6"] *= 1.06
+        else:
+            adjusted["0"] *= 1.04
+            adjusted["1"] *= 1.03
+        return _normalize_probabilities(adjusted), True
+
+    if family == "L":
+        current_rr = float(innings_state.get("current_run_rate") or 0.0)
+        if current_rr >= 9.0:
+            adjusted["4"] *= 1.05
+            adjusted["6"] *= 1.05
+        else:
+            adjusted["0"] *= 1.04
+            adjusted["1"] *= 1.03
+        return _normalize_probabilities(adjusted), True
+
+    if family == "M":
+        required_rr = innings_state.get("required_run_rate")
+        if not isinstance(required_rr, (int, float)):
+            return base, False
+        pressure = float(required_rr) - float(innings_state.get("current_run_rate") or 0.0)
+        if pressure >= 2.0:
+            adjusted["4"] *= 1.10
+            adjusted["6"] *= 1.10
+            adjusted["wicket"] *= 1.05
+            adjusted["0"] *= 0.93
+        elif pressure <= -1.5:
+            adjusted["0"] *= 1.05
+            adjusted["1"] *= 1.04
+            adjusted["6"] *= 0.93
+        return _normalize_probabilities(adjusted), True
+
+    if family == "N":
+        wickets_remaining = int(innings_state.get("wickets_remaining") or 10)
+        if wickets_remaining <= 3:
+            adjusted["wicket"] *= 1.08
+            adjusted["6"] *= 0.95
+        return _normalize_probabilities(adjusted), True
+
+    if family == "O":
+        balls_remaining = int(innings_state.get("balls_remaining") or 0)
+        if balls_remaining and balls_remaining <= 24:
+            adjusted["4"] *= 1.06
+            adjusted["6"] *= 1.07
+            adjusted["wicket"] *= 1.04
+        return _normalize_probabilities(adjusted), True
+
+    if family == "Q":
+        balls = int(striker.get("balls") or 0)
+        runs = int(striker.get("runs") or 0)
+        if balls >= 6:
+            sr = (runs * 100.0) / max(1, balls)
+            if sr >= 150.0:
+                adjusted["4"] *= 1.08
+                adjusted["6"] *= 1.10
+            elif sr <= 90.0:
+                adjusted["0"] *= 1.05
+                adjusted["wicket"] *= 1.04
+            return _normalize_probabilities(adjusted), True
+        return base, False
+
+    if family == "R":
+        balls = int(bowler.get("balls") or 0)
+        runs = int(bowler.get("runs") or 0)
+        if balls >= 6:
+            econ = runs / (balls / 6.0)
+            if econ >= 10.0:
+                adjusted["4"] *= 1.06
+                adjusted["6"] *= 1.05
+            elif econ <= 6.0:
+                adjusted["0"] *= 1.06
+                adjusted["wicket"] *= 1.05
+            return _normalize_probabilities(adjusted), True
+        return base, False
+
+    if family == "S":
+        batter_recent = recent_form.get("batter_recent_matches", {})
+        bowler_recent = recent_form.get("bowler_recent_matches", {})
+        batter_balls = int(batter_recent.get("balls") or 0)
+        bowler_balls = int(bowler_recent.get("balls") or 0)
+        if batter_balls >= 30:
+            bsr = float(batter_recent.get("strike_rate") or 0.0)
+            if bsr >= 145.0:
+                adjusted["4"] *= 1.04
+                adjusted["6"] *= 1.05
+        if bowler_balls >= 24:
+            econ = float(bowler_recent.get("economy") or 0.0)
+            if econ <= 7.0:
+                adjusted["0"] *= 1.04
+                adjusted["wicket"] *= 1.03
+        if batter_balls >= 30 or bowler_balls >= 24:
+            return _normalize_probabilities(adjusted), True
+        return base, False
+
+    if family == "V":
+        balls = int(partnership.get("balls") or 0)
+        runs = int(partnership.get("runs") or 0)
+        if balls >= 12:
+            psr = (runs * 100.0) / max(1, balls)
+            if psr >= 150.0:
+                adjusted["1"] *= 1.05
+                adjusted["4"] *= 1.06
+            return _normalize_probabilities(adjusted), True
+        return base, False
+
+    if family == "P":
+        outcomes = recent.get("outcomes", [])
+        if not outcomes:
+            return base, False
+        recent_counts = Counter(outcomes)
+        if recent_counts.get("4", 0) + recent_counts.get("6", 0) >= 2:
+            adjusted["4"] *= 1.05
+            adjusted["6"] *= 1.05
+        if recent_counts.get("wicket", 0) >= 1:
+            adjusted["wicket"] *= 1.06
+        return _normalize_probabilities(adjusted), True
+
+    if family == "X":
+        legal = int(recent_state.get("window_deliveries") or 0)
+        runs = int(recent_state.get("runs") or 0)
+        phase_name = str(context.get("phase_name") or "")
+        if legal >= 6:
+            rr = (runs * 6.0) / legal
+            if rr <= 5.0:
+                adjusted["0"] *= 1.05
+                adjusted["wicket"] *= 1.03
+            elif rr >= 10.0:
+                adjusted["4"] *= 1.06
+                adjusted["6"] *= 1.05
+        if phase_name == "death":
+            adjusted["4"] *= 1.02
+            adjusted["6"] *= 1.03
+        return _normalize_probabilities(adjusted), True
+
+    if family == "Y":
+        # Toss context is not available per-delivery in current contextual feature set.
+        return base, False
+
+    if family == "Z":
+        season_sample = int(context.get("season_sample") or 0)
+        if season_sample > 0:
+            season_probs = context.get("season_probs") or base
+            return _blend_candidate([(base, 0.7), (season_probs, 0.3)]), True
+        return base, False
+
+    return base, False
+
+
+def _build_feature_family_payloads(
+    baseline_probs: dict[str, float],
+    contextual_features: dict[str, Any],
+    context_phase: str,
+    season_probs: dict[str, float],
+    season_sample: int,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    cf = contextual_features
+    family_context = {
+        **cf,
+        "phase_name": context_phase,
+        "season_probs": season_probs,
+        "season_sample": season_sample,
+    }
+
+    sources: dict[str, tuple[dict[str, float], int]] = {
+        "A": (cf["batter_history"]["outcomes"]["outcome_probabilities"], int(cf["batter_history"]["outcomes"]["sample_size"])),
+        "B": (cf["bowler_history"]["outcomes"]["outcome_probabilities"], int(cf["bowler_history"]["outcomes"]["sample_size"])),
+        "C": (cf["matchup"]["outcomes"]["outcome_probabilities"], int(cf["matchup"]["outcomes"]["sample_size"])),
+        "D": (cf["matchups"]["batter_vs_bowling_type"]["outcome_probabilities"], int(cf["matchups"]["batter_vs_bowling_type"]["sample_size"])),
+        "E": (cf["matchups"]["bowler_vs_batter_type"]["outcome_probabilities"], int(cf["matchups"]["bowler_vs_batter_type"]["sample_size"])),
+        "F": (cf["phase_history"]["outcome_probabilities"], int(cf["phase_history"]["sample_size"])),
+        "G": (cf["venue_context"]["outcomes"]["outcome_probabilities"], int(cf["venue_context"]["outcomes"]["sample_size"])),
+        "H": (cf["team_context"]["batting_team_outcomes"]["outcome_probabilities"], int(cf["team_context"]["batting_team_outcomes"]["sample_size"])),
+        "I": (cf["team_context"]["bowling_team_outcomes"]["outcome_probabilities"], int(cf["team_context"]["bowling_team_outcomes"]["sample_size"])),
+        "J": (_blend_candidate([
+            (cf["team_context"]["batting_team_outcomes"]["outcome_probabilities"], 0.5),
+            (cf["team_context"]["bowling_team_outcomes"]["outcome_probabilities"], 0.5),
+        ]), min(int(cf["team_context"]["batting_team_outcomes"]["sample_size"]), int(cf["team_context"]["bowling_team_outcomes"]["sample_size"]))),
+        "T": (cf["venue_context"]["outcomes"]["outcome_probabilities"], int(cf["venue_context"]["outcomes"]["sample_size"])),
+        "U": (_blend_candidate([
+            (cf["team_context"]["batting_team_outcomes"]["outcome_probabilities"], 0.5),
+            (cf["team_context"]["bowling_team_outcomes"]["outcome_probabilities"], 0.5),
+        ]), min(int(cf["team_context"]["batting_team_outcomes"]["sample_size"]), int(cf["team_context"]["bowling_team_outcomes"]["sample_size"]))),
+        "W": (cf["similar_situations"]["outcomes"]["outcome_probabilities"], int(cf["similar_situations"]["outcomes"]["sample_size"])),
+    }
+
+    payloads: dict[str, dict[str, Any]] = {}
+    diagnostics: dict[str, Any] = {}
+    for family, family_name in FEATURE_FAMILIES.items():
+        if family in sources:
+            source_probs, sample = sources[family]
+            weight = min(0.35, 0.35 * (sample / 250.0))
+            blended = _blend_candidate([(baseline_probs, 1.0 - weight), (source_probs, weight)])
+            payloads[family] = {"probs": blended, "available": sample > 0, "sample_size": sample, "name": family_name}
+            diagnostics[family] = {"family": family_name, "sample_size": sample, "available": sample > 0}
+            continue
+
+        adjusted, available = _apply_family_adjustment(baseline_probs, family, family_context)
+        payloads[family] = {"probs": adjusted, "available": available, "sample_size": 1 if available else 0, "name": family_name}
+        diagnostics[family] = {"family": family_name, "sample_size": 1 if available else 0, "available": available}
+
+    return payloads, diagnostics
 
 
 def evaluate_contextual_candidates(
@@ -68,6 +316,13 @@ def evaluate_contextual_candidates(
         "similar_situations_context": MetricAccumulator(),
         "combined_context": MetricAccumulator(),
     }
+    family_metrics = {family: MetricAccumulator() for family in FEATURE_FAMILIES}
+    family_phase_metrics = {
+        family: {"powerplay": MetricAccumulator(), "middle": MetricAccumulator(), "death": MetricAccumulator()}
+        for family in FEATURE_FAMILIES
+    }
+    family_available_counts = {family: 0 for family in FEATURE_FAMILIES}
+    pressure_metrics = {"low": MetricAccumulator(), "balanced": MetricAccumulator(), "high": MetricAccumulator()}
     phase_metrics = {
         name: {"powerplay": MetricAccumulator(), "middle": MetricAccumulator(), "death": MetricAccumulator()}
         for name in candidates
@@ -86,6 +341,17 @@ def evaluate_contextual_candidates(
         baseline = predict_hierarchical_from_count_map(context.feature_values, context.context_count_map, context.global_counts)
         combined = predict_contextual_from_context(context)
         cf = context.contextual_features
+        season_counts = Counter()
+        if int(row["season_id"]) > 0:
+            season_counts = _fetch_season_counts_before_timeline(conn, context.timeline_key, int(row["season_id"]))
+        season_probs = _normalize_probabilities({label: float(season_counts.get(label, 0.0)) for label in OUTCOME_LABELS})
+        family_payloads, family_diag = _build_feature_family_payloads(
+            baseline["outcome_probabilities"],
+            cf,
+            context.phase,
+            season_probs,
+            int(sum(season_counts.values())),
+        )
 
         player_history = _blend_candidate(
             [
@@ -149,9 +415,23 @@ def evaluate_contextual_candidates(
         }
         actual = classify_delivery_outcome(context.target)
         phase = context.phase
+        pressure_gap = cf["innings_state"].get("pressure_gap")
+        pressure_bucket = "balanced"
+        if isinstance(pressure_gap, (int, float)):
+            if float(pressure_gap) >= 2.0:
+                pressure_bucket = "high"
+            elif float(pressure_gap) <= -1.5:
+                pressure_bucket = "low"
         for candidate_name, probs in payloads.items():
             candidates[candidate_name].add(probs, actual)
             phase_metrics[candidate_name][phase].add(probs, actual)
+        pressure_metrics[pressure_bucket].add(combined["outcome_probabilities"], actual)
+
+        for family, payload in family_payloads.items():
+            family_metrics[family].add(payload["probs"], actual)
+            family_phase_metrics[family][phase].add(payload["probs"], actual)
+            if payload["available"]:
+                family_available_counts[family] += 1
 
         traces.append(
             {
@@ -165,6 +445,18 @@ def evaluate_contextual_candidates(
                     }
                     for name, probs in payloads.items()
                 },
+                "feature_family_predictions": {
+                    family: {
+                        "top": _top_outcome(payload["probs"]),
+                        "probabilities": payload["probs"],
+                        "available": payload["available"],
+                        "sample_size": payload["sample_size"],
+                        "name": payload["name"],
+                    }
+                    for family, payload in family_payloads.items()
+                },
+                "feature_family_diagnostics": family_diag,
+                "pressure_bucket": pressure_bucket,
             }
         )
 
@@ -181,8 +473,47 @@ def evaluate_contextual_candidates(
             }
             for name, metrics in candidates.items()
         },
+        "feature_families": {
+            family: {
+                "name": FEATURE_FAMILIES[family],
+                "overall": family_metrics[family].as_metrics(),
+                "phase_breakdown": {
+                    phase: family_phase_metrics[family][phase].as_metrics() for phase in ("powerplay", "middle", "death")
+                },
+                "available_predictions": family_available_counts[family],
+                "coverage_ratio": round((family_available_counts[family] / len(eval_rows)), 6) if eval_rows else 0.0,
+            }
+            for family in FEATURE_FAMILIES
+        },
+        "pressure_breakdown": {bucket: pressure_metrics[bucket].as_metrics() for bucket in ("low", "balanced", "high")},
         "delivery_predictions": traces,
     }
+
+
+def _fetch_season_counts_before_timeline(conn: sqlite3.Connection, timeline: str, season_id: int) -> Counter[str]:
+    rows = conn.execute(
+        """
+        SELECT
+            CASE
+                WHEN is_wicket = 1 THEN 'wicket'
+                WHEN total_runs = 0 THEN '0'
+                WHEN total_runs = 1 THEN '1'
+                WHEN total_runs = 2 THEN '2'
+                WHEN total_runs = 4 THEN '4'
+                WHEN total_runs = 6 THEN '6'
+                ELSE '3+'
+            END AS outcome_label,
+            COUNT(*) AS deliveries
+        FROM deliveries
+        WHERE timeline_key < ? AND season_id = ?
+        GROUP BY outcome_label
+        """,
+        (timeline, season_id),
+    ).fetchall()
+    counts: Counter[str] = Counter()
+    for row in rows:
+        counts[str(row["outcome_label"])] += int(row["deliveries"])
+    return counts
 
 
 @dataclass

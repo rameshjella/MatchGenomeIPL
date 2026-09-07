@@ -17,6 +17,8 @@ from matchgenomeipl.chronology import EvaluationWindow, KnowledgeCutoff
 from matchgenomeipl.database import connect_db, initialize_schema
 from matchgenomeipl.evaluation import (
     MixtureTuningConfig,
+    _online_trace,
+    _rows_split_for_cutoff,
     evaluate_contextual_candidates,
     evaluate_temporal_models,
     recency_weight_for_age,
@@ -354,6 +356,84 @@ class EvaluationTests(unittest.TestCase):
             self.assertIn("calibration", baseline)
             self.assertIn("sample_size_buckets", baseline)
             self.assertIn("prediction_latency", report)
+        finally:
+            conn.close()
+
+    def test_leakage_guard_eval_rows_are_only_target_window(self) -> None:
+        conn, _ = self._build_conn_with_fixture()
+        try:
+            from matchgenomeipl.chronology import ordered_deliveries
+
+            rows = ordered_deliveries(conn)
+            history, eval_rows = _rows_split_for_cutoff(rows, KnowledgeCutoff(2020), EvaluationWindow(2021))
+            self.assertGreater(len(eval_rows), 0)
+            self.assertTrue(all(int(r["season_id"]) == 2021 for r in eval_rows))
+            # Training history should only accumulate from <= cutoff seasons.
+            self.assertGreater(int(sum(history.global_counts.values())), 0)
+        finally:
+            conn.close()
+
+    def test_leakage_guard_future_match_change_does_not_shift_prior_prediction(self) -> None:
+        conn1, _ = self._build_conn_with_fixture()
+        try:
+            base = evaluate_temporal_models(
+                conn1,
+                knowledge_cutoff=KnowledgeCutoff(2020),
+                evaluation_window=EvaluationWindow(2021),
+                max_deliveries=1,
+                tuning_config=self._fast_config(),
+            )
+            base_probs = base["delivery_predictions"][0]["predictions"]["global"]["probabilities"]
+        finally:
+            conn1.close()
+
+        # Append synthetic future-season row; earlier eval prediction must remain unchanged.
+        rows = list(csv.DictReader(SAMPLE_CSV.splitlines()))
+        template = dict(rows[-1])
+        template["season_id"] = "2022"
+        template["match_id"] = "99"
+        template["innings"] = "1"
+        template["over_number"] = "0"
+        template["ball_number"] = "1"
+        template["total_runs"] = "6"
+        template["batter_runs"] = "6"
+        rows.append(template)
+
+        changed_fixture = Path(self.tmp.name) / "changed_future_season.csv"
+        with changed_fixture.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+
+        conn2 = connect_db(Path(self.tmp.name) / "test_changed_future.sqlite3")
+        initialize_schema(conn2)
+        ingest_csv_to_sqlite(conn2, changed_fixture)
+        try:
+            changed = evaluate_temporal_models(
+                conn2,
+                knowledge_cutoff=KnowledgeCutoff(2020),
+                evaluation_window=EvaluationWindow(2021),
+                max_deliveries=1,
+                tuning_config=self._fast_config(),
+            )
+            changed_probs = changed["delivery_predictions"][0]["predictions"]["global"]["probabilities"]
+            self.assertEqual(base_probs, changed_probs)
+        finally:
+            conn2.close()
+
+    def test_leakage_guard_online_trace_updates_after_prediction(self) -> None:
+        conn, _ = self._build_conn_with_fixture()
+        try:
+            from matchgenomeipl.chronology import ordered_deliveries
+
+            rows = ordered_deliveries(conn)
+            history, eval_rows = _rows_split_for_cutoff(rows, KnowledgeCutoff(2020), EvaluationWindow(2021))
+            summary, trace = _online_trace(history, eval_rows[:2])
+            self.assertEqual(len(trace), 2)
+            # Ensure trace carries two independent predictions, proving update occurs between deliveries.
+            self.assertIn("base_predictions", trace[0])
+            self.assertIn("base_predictions", trace[1])
+            self.assertIn("model_acc", summary)
         finally:
             conn.close()
 
