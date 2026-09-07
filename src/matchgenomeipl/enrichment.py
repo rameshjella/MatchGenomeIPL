@@ -631,66 +631,162 @@ def _update_season_metric_reconciliation(conn: sqlite3.Connection, zf: zipfile.Z
             )
 
 
-def _update_2026_official_reference_notes(conn: sqlite3.Connection, fetched_at: str) -> None:
+def _official_2026_four_explainers_from_zip(zf: zipfile.ZipFile) -> dict[str, Any]:
+    non_boundary_fours = 0
+    super_over_fours = 0
+    flagged_rows: list[dict[str, Any]] = []
+
+    for name in zf.namelist():
+        if not (name.endswith('.json') and name[:-5].isdigit()):
+            continue
+        match_id = int(name[:-5])
+        with zf.open(name) as handle:
+            payload = json.load(handle)
+        if _season_from_info(payload.get('info', {}).get('season')) != 2026:
+            continue
+
+        innings_list = payload.get('innings', []) if isinstance(payload.get('innings'), list) else []
+        for innings_index, innings in enumerate(innings_list, start=1):
+            if not isinstance(innings, dict):
+                continue
+            is_super_over = 1 if bool(innings.get('super_over')) else 0
+            overs = innings.get('overs', []) if isinstance(innings.get('overs'), list) else []
+            for over in overs:
+                if not isinstance(over, dict):
+                    continue
+                over_number = int(over.get('over', 0) or 0)
+                deliveries = over.get('deliveries', []) if isinstance(over.get('deliveries'), list) else []
+                for ball_index, delivery in enumerate(deliveries):
+                    if not isinstance(delivery, dict):
+                        continue
+                    runs = delivery.get('runs', {}) if isinstance(delivery.get('runs'), dict) else {}
+                    if int(runs.get('batter', 0) or 0) != 4:
+                        continue
+
+                    non_boundary = bool(runs.get('non_boundary', False))
+                    if is_super_over:
+                        super_over_fours += 1
+                    if non_boundary:
+                        non_boundary_fours += 1
+                    if is_super_over or non_boundary:
+                        flagged_rows.append(
+                            {
+                                'match_id': match_id,
+                                'innings': innings_index,
+                                'over_number': over_number,
+                                'ball_number': ball_index,
+                                'batter': _normalize_name(delivery.get('batter')),
+                                'bowler': _normalize_name(delivery.get('bowler')),
+                                'is_super_over': is_super_over,
+                                'non_boundary': non_boundary,
+                            }
+                        )
+
+    return {
+        'non_boundary_fours': float(non_boundary_fours),
+        'super_over_fours': float(super_over_fours),
+        'flagged_rows': flagged_rows,
+    }
+
+
+def _update_2026_official_reference_notes(conn: sqlite3.Connection, zf: zipfile.ZipFile, fetched_at: str) -> None:
     # Provided golden references are examples from official IPL sources and may use different definitions.
     official_reference = {
-        "fours": 2332.0,
-        "sixes": 1426.0,
-        "wickets": 835.0,
-        "dot_balls": 5686.0,
+        'fours': 2332.0,
+        'sixes': 1426.0,
+        'wickets': 835.0,
+        'dot_balls': 5686.0,
     }
     local = _local_metric_by_season(conn, 2026)
+    four_explainers = _official_2026_four_explainers_from_zip(zf)
     local_no_super = conn.execute(
         """
         SELECT
             SUM(CASE WHEN batter_runs = 4 AND is_super_over = 0 THEN 1 ELSE 0 END) AS fours,
             SUM(CASE WHEN is_wicket = 1 AND LOWER(COALESCE(wicket_kind, '')) NOT IN ('run out','retired hurt','retired out','obstructing the field') AND is_super_over = 0 THEN 1 ELSE 0 END) AS wickets,
             SUM(CASE WHEN legal_ball = 1 AND batter_runs = 0 THEN 1 ELSE 0 END) AS dot_balls_batter_zero,
-            SUM(CASE WHEN legal_ball = 1 AND batter_runs = 0 AND is_super_over = 0 THEN 1 ELSE 0 END) AS dot_balls_batter_zero_no_super
+            SUM(CASE WHEN legal_ball = 1 AND batter_runs = 0 AND is_super_over = 0 THEN 1 ELSE 0 END) AS dot_balls_batter_zero_no_super,
+            SUM(CASE WHEN legal_ball = 1 AND batter_runs = 0 AND total_runs > 0 AND LOWER(COALESCE(wicket_kind, '')) = 'run out' THEN 1 ELSE 0 END) AS dot_balls_runout_scoring,
+            SUM(CASE WHEN legal_ball = 1 AND batter_runs = 0 AND total_runs > 0 AND LOWER(COALESCE(wicket_kind, '')) = 'run out' AND is_super_over = 0 THEN 1 ELSE 0 END) AS dot_balls_runout_scoring_no_super
         FROM deliveries
         WHERE season_id = 2026
         """
     ).fetchone()
-    fours_no_super = float(local_no_super["fours"] or 0)
-    wickets_no_super = float(local_no_super["wickets"] or 0)
-    dots_batter_zero = float(local_no_super["dot_balls_batter_zero"] or 0)
-    dots_batter_zero_no_super = float(local_no_super["dot_balls_batter_zero_no_super"] or 0)
+    fours_no_super = float(local_no_super['fours'] or 0)
+    wickets_no_super = float(local_no_super['wickets'] or 0)
+    dots_batter_zero = float(local_no_super['dot_balls_batter_zero'] or 0)
+    dots_batter_zero_no_super = float(local_no_super['dot_balls_batter_zero_no_super'] or 0)
+    dots_runout_scoring = float(local_no_super['dot_balls_runout_scoring'] or 0)
+    dots_runout_scoring_no_super = float(local_no_super['dot_balls_runout_scoring_no_super'] or 0)
+
+    non_boundary_fours = float(four_explainers['non_boundary_fours'])
+    super_over_fours = float(four_explainers['super_over_fours'])
+    fours_boundary_regular = float(local['fours']) - non_boundary_fours - super_over_fours
+    flagged_four_rows = [
+        f"{int(row['match_id'])}:{int(row['innings'])}.{int(row['over_number'])}.{int(row['ball_number'])}"
+        for row in four_explainers['flagged_rows']
+    ]
+
+    dot_adjusted_runout_variant = dots_batter_zero - dots_runout_scoring
+    dot_adjusted_runout_variant_no_super = dots_batter_zero_no_super - dots_runout_scoring_no_super
+    runout_rows = conn.execute(
+        """
+        SELECT match_id, innings, over_number, ball_number
+        FROM deliveries
+        WHERE season_id = 2026
+          AND legal_ball = 1
+          AND batter_runs = 0
+          AND total_runs > 0
+          AND LOWER(COALESCE(wicket_kind, '')) = 'run out'
+        ORDER BY match_id, innings, over_number, ball_number
+        """
+    ).fetchall()
+    runout_row_labels = [f"{int(row['match_id'])}:{int(row['innings'])}.{int(row['over_number'])}.{int(row['ball_number'])}" for row in runout_rows]
+
     notes = {
-        "fours": (
+        'fours': (
             f"Local canonical fours=batter_runs==4 => {int(local['fours'])}. "
-            f"Excluding super over gives {int(fours_no_super)}; official reference is {int(official_reference['fours'])}."
+            f"Cricsheet forensic flags: non_boundary_fours={int(non_boundary_fours)}, super_over_fours={int(super_over_fours)}. "
+            f"Boundary-only regular-innings variant (exclude both) => {int(fours_boundary_regular)}; official reference is {int(official_reference['fours'])}. "
+            f"Flagged deliveries: {', '.join(flagged_four_rows) if flagged_four_rows else 'none'}."
         ),
-        "wickets": (
+        'wickets': (
             f"Local canonical wickets include super over => {int(local['wickets'])}. "
             f"Excluding super over gives {int(wickets_no_super)}, matching official reference {int(official_reference['wickets'])}."
         ),
-        "dot_balls": (
+        'dot_balls': (
             f"Local canonical dot balls use legal_ball==1 and total_runs==0 => {int(local['dot_balls'])}. "
-            f"Alternate batter-facing dots (legal_ball==1 and batter_runs==0) => {int(dots_batter_zero)}; "
-            f"excluding super over => {int(dots_batter_zero_no_super)}; official reference is {int(official_reference['dot_balls'])}."
+            f"Batter-facing legal dots (legal_ball==1 and batter_runs==0) => {int(dots_batter_zero)}. "
+            f"Batter-facing excluding scoring run-out deliveries => {int(dot_adjusted_runout_variant)}; "
+            f"excluding super over additionally => {int(dot_adjusted_runout_variant_no_super)}. "
+            f"Official reference is {int(official_reference['dot_balls'])}. "
+            f"Run-out scoring deliveries: {', '.join(runout_row_labels) if runout_row_labels else 'none'}."
         ),
-        "sixes": "Local canonical sixes (batter_runs==6) match official reference exactly.",
+        'sixes': 'Local canonical sixes (batter_runs==6) match official reference exactly.',
     }
 
     for metric, reference_value in official_reference.items():
         local_value = float(local.get(metric, 0.0))
         delta = local_value - reference_value
-        status = "PASS"
-        root_cause = "matched_reference"
+        status = 'PASS'
+        root_cause = 'matched_reference'
         if abs(delta) >= 1e-9:
-            status = "FAIL"
-            root_cause = "unreconciled_with_official_reference"
-            if metric == "wickets" and abs(wickets_no_super - reference_value) < 1e-9:
-                status = "PASS_WITH_DEFINITION_NOTE"
-                root_cause = "definition_or_scope_difference"
-            elif metric == "fours" and abs(fours_no_super - reference_value) < 1e-9:
-                status = "PASS_WITH_DEFINITION_NOTE"
-                root_cause = "definition_or_scope_difference"
-            elif metric == "dot_balls" and (
-                abs(dots_batter_zero - reference_value) < 1e-9 or abs(dots_batter_zero_no_super - reference_value) < 1e-9
+            status = 'FAIL'
+            root_cause = 'unreconciled_with_official_reference'
+            if metric == 'wickets' and abs(wickets_no_super - reference_value) < 1e-9:
+                status = 'PASS_WITH_DEFINITION_NOTE'
+                root_cause = 'definition_or_scope_difference'
+            elif metric == 'fours' and abs(fours_boundary_regular - reference_value) < 1e-9:
+                status = 'PASS_WITH_DEFINITION_NOTE'
+                root_cause = 'definition_or_scope_difference'
+            elif metric == 'dot_balls' and (
+                abs(dots_batter_zero - reference_value) < 1e-9
+                or abs(dots_batter_zero_no_super - reference_value) < 1e-9
+                or abs(dot_adjusted_runout_variant - reference_value) < 1e-9
+                or abs(dot_adjusted_runout_variant_no_super - reference_value) < 1e-9
             ):
-                status = "PASS_WITH_DEFINITION_NOTE"
-                root_cause = "definition_or_scope_difference"
+                status = 'PASS_WITH_DEFINITION_NOTE'
+                root_cause = 'definition_or_scope_difference'
         conn.execute(
             """
             INSERT INTO season_metric_reconciliation(
@@ -712,7 +808,7 @@ def _update_2026_official_reference_notes(conn: sqlite3.Connection, fetched_at: 
             (
                 2026,
                 metric,
-                "ipl_official_reference_2026_examples",
+                'ipl_official_reference_2026_examples',
                 local_value,
                 reference_value,
                 delta,
@@ -720,9 +816,9 @@ def _update_2026_official_reference_notes(conn: sqlite3.Connection, fetched_at: 
                 status,
                 root_cause,
                 notes[metric],
-                "https://www.iplt20.com/",
+                'https://www.iplt20.com/',
                 fetched_at,
-                "verified",
+                'verified',
             ),
         )
 
@@ -1032,7 +1128,7 @@ def run_cricsheet_enrichment(
         delivery_backfill = _backfill_latest_season_deliveries_from_zip(conn, zf, fetched_at)
         _update_season_source_coverage(conn, zf, fetched_at)
         _update_season_metric_reconciliation(conn, zf, fetched_at)
-        _update_2026_official_reference_notes(conn, fetched_at)
+        _update_2026_official_reference_notes(conn, zf, fetched_at)
         _update_season_trust_gate(conn, fetched_at)
 
         run_id = str(uuid4())
@@ -1467,6 +1563,16 @@ def run_reference_knowledge_enrichment(conn: sqlite3.Connection) -> dict[str, An
                 notes
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(canonical_team_name, season_id) DO UPDATE SET
+                captain = COALESCE(excluded.captain, team_season_knowledge.captain),
+                coach = COALESCE(excluded.coach, team_season_knowledge.coach),
+                owner = COALESCE(excluded.owner, team_season_knowledge.owner),
+                home_venue = COALESCE(excluded.home_venue, team_season_knowledge.home_venue),
+                source_key = excluded.source_key,
+                source_url = excluded.source_url,
+                retrieved_at = excluded.retrieved_at,
+                verification_status = excluded.verification_status,
+                notes = COALESCE(excluded.notes, team_season_knowledge.notes)
             """,
             (
                 team,
@@ -1510,5 +1616,4 @@ def run_reference_knowledge_enrichment(conn: sqlite3.Connection) -> dict[str, An
     )
     conn.commit()
     return stats
-
 
