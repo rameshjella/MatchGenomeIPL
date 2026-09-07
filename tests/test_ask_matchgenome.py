@@ -103,12 +103,57 @@ class AskMatchGenomeTests(unittest.TestCase):
     def test_player_knowledge_unavailable_attribute(self) -> None:
         payload = self.engine.ask("When was PlayerA born?")
         self.assertEqual(payload["results"][0]["status"], "ok")
-        self.assertIn("does not currently have verified information", payload["results"][0]["result"]["label"])
+        self.assertIn("Verified information is not currently available", payload["results"][0]["result"]["label"])
 
     def test_team_season_knowledge_lookup(self) -> None:
         payload = self.engine.ask("Who was Team1 captain in 2020?")
         self.assertEqual(payload["results"][0]["status"], "ok")
         self.assertEqual(payload["results"][0]["result"]["value"], "Captain One")
+
+    def test_team_season_knowledge_lookup_without_season_uses_latest_known(self) -> None:
+        payload = self.engine.ask("Who is Team1 captain?")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertEqual(payload["results"][0]["result"]["value"], "Captain One")
+
+    def test_children_phrase_with_kids_is_supported(self) -> None:
+        payload = self.engine.ask("How many kids does PlayerA have?")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+
+    def test_spelling_variant_resolves_player(self) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO player_knowledge(
+                canonical_player_name, full_name, source_key, source_url, retrieved_at, verification_status
+            ) VALUES ('V Suryavanshi', 'Vaibhav Suryavanshi', 'test_fixture', 'https://example.invalid/vaibhav', CURRENT_TIMESTAMP, 'provisional')
+            ON CONFLICT(canonical_player_name) DO UPDATE SET full_name=excluded.full_name
+            """
+        )
+        self.conn.execute("INSERT OR IGNORE INTO players(player_name) VALUES ('V Suryavanshi')")
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO player_identity_alias(alias_name, canonical_player_name, source_key, source_url, retrieved_at, verification_status)
+            VALUES ('v suryavanshi', 'V Suryavanshi', 'test_fixture', NULL, CURRENT_TIMESTAMP, 'provisional')
+            """
+        )
+        self.conn.commit()
+        self.engine = AskMatchGenomeEngine(self.conn)
+        payload = self.engine.ask("What is the full name of Vaibhav Sooryavanshi?")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertEqual(payload["results"][0]["result"]["value"], "Vaibhav Suryavanshi")
+
+    def test_standalone_variant_name_is_supported(self) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO player_knowledge(
+                canonical_player_name, full_name, source_key, source_url, retrieved_at, verification_status
+            ) VALUES ('V Suryavanshi', 'Vaibhav Suryavanshi', 'test_fixture', 'https://example.invalid/vaibhav', CURRENT_TIMESTAMP, 'provisional')
+            ON CONFLICT(canonical_player_name) DO UPDATE SET full_name=excluded.full_name
+            """
+        )
+        self.conn.commit()
+        self.engine = AskMatchGenomeEngine(self.conn)
+        payload = self.engine.ask("Vaibhav Sooryavanshi")
+        self.assertEqual(payload["results"][0]["status"], "ok")
 
     def test_fixtures_results_points_table_queries(self) -> None:
         fx = self.engine.ask("Show IPL 2020 fixtures")

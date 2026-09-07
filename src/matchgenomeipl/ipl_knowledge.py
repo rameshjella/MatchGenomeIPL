@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import ast
 from datetime import date
+import json
+import difflib
 import re
 import sqlite3
 from typing import Any
@@ -111,6 +113,56 @@ def ensure_knowledge_bootstrap(conn: sqlite3.Connection) -> None:
                 (alias, player),
             )
 
+        identity_id = f"player:{_norm(player).replace(' ', '_')}"
+        aliases_json = json.dumps(sorted(a for a in aliases if a))
+        conn.execute(
+            """
+            INSERT INTO player_identity(
+                player_id,
+                canonical_name,
+                full_name,
+                display_name,
+                short_name,
+                initials,
+                role,
+                batting_style,
+                bowling_style,
+                aliases_json,
+                source_names_json,
+                source_identifiers_json,
+                identity_confidence,
+                verification_status,
+                source,
+                source_url,
+                retrieved_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, 'derived', 'dataset_players', NULL, CURRENT_TIMESTAMP)
+            ON CONFLICT(player_id) DO UPDATE SET
+                canonical_name = excluded.canonical_name,
+                full_name = COALESCE(player_identity.full_name, excluded.full_name),
+                display_name = excluded.display_name,
+                short_name = excluded.short_name,
+                initials = excluded.initials,
+                aliases_json = excluded.aliases_json,
+                source_names_json = excluded.source_names_json,
+                source_identifiers_json = excluded.source_identifiers_json,
+                identity_confidence = MAX(player_identity.identity_confidence, excluded.identity_confidence),
+                retrieved_at = CURRENT_TIMESTAMP
+            """,
+            (
+                identity_id,
+                player,
+                player,
+                player,
+                tokens[-1] if tokens else player,
+                "".join(t[0].upper() for t in tokens if t),
+                aliases_json,
+                json.dumps([player]),
+                json.dumps([]),
+                0.65,
+            ),
+        )
+
     # Team bootstrap from enriched identity tables when present.
     teams = conn.execute(
         """
@@ -145,6 +197,33 @@ def resolve_player_identity(conn: sqlite3.Connection, query: str) -> tuple[str |
     if not normalized:
         return None, []
 
+    def fuzzy_match() -> tuple[str | None, list[str]]:
+        query_tokens = normalized.split()
+        if len(query_tokens) < 2:
+            return None, []
+        fuzzy_rows = conn.execute("SELECT DISTINCT canonical_player_name FROM player_knowledge").fetchall()
+        fuzzy_scored: list[tuple[str, float]] = []
+        for row in fuzzy_rows:
+            name = str(row["canonical_player_name"])
+            tokens = _norm(name).split()
+            if len(tokens) < 2:
+                continue
+            last_ratio = difflib.SequenceMatcher(None, query_tokens[-1], tokens[-1]).ratio()
+            if len(tokens[0]) == 1 and query_tokens[0]:
+                first_ratio = 1.0 if tokens[0] == query_tokens[0][0] else 0.0
+            else:
+                first_ratio = difflib.SequenceMatcher(None, query_tokens[0], tokens[0]).ratio()
+            if last_ratio < 0.82 or first_ratio < 0.34:
+                continue
+            fuzzy_scored.append((name, (last_ratio * 80.0) + (first_ratio * 20.0)))
+        fuzzy_scored.sort(key=lambda item: (-item[1], item[0]))
+        if not fuzzy_scored:
+            return None, []
+        candidates = [name for name, _ in fuzzy_scored[:8]]
+        if len(fuzzy_scored) == 1 or fuzzy_scored[0][1] >= fuzzy_scored[1][1] + 16.0:
+            return fuzzy_scored[0][0], candidates
+        return None, candidates
+
     activity = _player_activity_map(conn)
     token_set = set(normalized.split())
     rows = conn.execute(
@@ -156,7 +235,7 @@ def resolve_player_identity(conn: sqlite3.Connection, query: str) -> tuple[str |
         (normalized, f"%{normalized}%"),
     ).fetchall()
     if not rows:
-        return None, []
+        return fuzzy_match()
 
     ranked: dict[str, float] = {}
     for row in rows:
@@ -185,6 +264,11 @@ def resolve_player_identity(conn: sqlite3.Connection, query: str) -> tuple[str |
     second_score = ordered[1][1]
     if top_score >= 130.0 and top_score >= second_score + 24.0:
         return ordered[0][0], candidates
+
+    # Fuzzy fallback for known source spelling variants; keep strict ambiguity checks.
+    fuzzy_canonical, fuzzy_candidates = fuzzy_match()
+    if fuzzy_canonical:
+        return fuzzy_canonical, fuzzy_candidates
     return None, candidates
 
 
@@ -229,7 +313,7 @@ def lookup_player_fact(conn: sqlite3.Connection, player_query: str, attribute: s
     if row is None:
         return KnowledgeAnswer(
             value=None,
-            label="MatchGenome does not currently have verified information for that attribute.",
+            label="Verified information is not currently available.",
             evidence={
                 "interpretation": "player knowledge lookup",
                 "player": canonical,
@@ -254,7 +338,7 @@ def lookup_player_fact(conn: sqlite3.Connection, player_query: str, attribute: s
     if value is None or str(value).strip() == "":
         return KnowledgeAnswer(
             value=None,
-            label="MatchGenome does not currently have verified information for that attribute.",
+            label="Verified information is not currently available.",
             evidence={
                 "interpretation": "player knowledge lookup",
                 "player": canonical,
@@ -341,7 +425,7 @@ def top_performers(conn: sqlite3.Connection, season: int | None = None, limit: i
         tuple(params + [limit]),
     ).fetchall()
     wickets = conn.execute(
-        "SELECT bowler AS player, SUM(CASE WHEN is_wicket = 1 THEN 1 ELSE 0 END) AS wickets FROM deliveries"
+        "SELECT bowler AS player, SUM(CASE WHEN is_wicket = 1 AND COALESCE(wicket_kind, '') NOT IN ('run out', 'retired hurt', 'retired out', 'obstructing the field') THEN 1 ELSE 0 END) AS wickets FROM deliveries"
         + season_sql
         + " GROUP BY bowler ORDER BY wickets DESC, player ASC LIMIT ?",
         tuple(params + [limit]),

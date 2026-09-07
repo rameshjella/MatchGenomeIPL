@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import ast
+import difflib
 import json
 import os
 import re
@@ -112,6 +113,7 @@ class SemanticResolver:
             MetricDefinition("bowling_strike_rate", ("bowling strike rate",), ("bowling",), "balls/wicket", "Balls per wicket."),
             MetricDefinition("run_rate", ("team run rate", "innings run rate", "run rate"), ("team", "innings"), "runs/over", "Team/innings run rate."),
             MetricDefinition("player_of_match", ("player of the match", "man of the match"), ("match",), "text", "Player of the match lookup."),
+            MetricDefinition("result", ("result", "winner", "what happened"), ("match",), "text", "Match result summary lookup."),
         ]
         return {d.name: d for d in defs}
 
@@ -440,6 +442,26 @@ class SemanticResolver:
             next_score = score_map.get(ranked[1], 0.0) + self._score_player_candidate(lowered, ranked[1])
             if best_score >= 24.0 and best_score >= next_score + 12.0:
                 return EntityResolution(ranked[0], ranked, False)
+
+        # Token-similarity fallback for known spelling variants (for example: sooryavanshi/suryavanshi).
+        if len(tokens) >= 2:
+            fuzzy_scores: dict[str, float] = {}
+            candidate_players: set[str] = set(self.player_activity.keys())
+            for values in self.player_aliases.values():
+                candidate_players.update(values)
+            for player in candidate_players:
+                p_tokens = self._tokenize(player)
+                if len(p_tokens) < 2:
+                    continue
+                last_ratio = difflib.SequenceMatcher(None, tokens[-1], p_tokens[-1]).ratio()
+                first_ratio = difflib.SequenceMatcher(None, tokens[0], p_tokens[0]).ratio()
+                if last_ratio < 0.82 or first_ratio < 0.34:
+                    continue
+                fuzzy_scores[player] = (last_ratio * 80.0) + (first_ratio * 20.0) + self._score_player_candidate(lowered, player)
+            if fuzzy_scores:
+                ranked_fuzzy = sorted(fuzzy_scores.items(), key=lambda item: (-item[1], item[0]))
+                if len(ranked_fuzzy) == 1 or ranked_fuzzy[0][1] >= ranked_fuzzy[1][1] + 16.0:
+                    return EntityResolution(ranked_fuzzy[0][0], [name for name, _ in ranked_fuzzy[:6]], False)
         return EntityResolution(None, candidates[:6], True)
 
     def resolve_team(self, text: str) -> EntityResolution:
@@ -475,6 +497,7 @@ class RuleBasedPlanProvider:
     def build_plan(self, question: str, semantic: SemanticResolver, context: ConversationContext) -> QueryPlan | None:
         raw = question.strip()
         lowered = SemanticResolver._normalize_text(raw)
+        tokens = lowered.split()
         if not raw:
             return None
 
@@ -582,7 +605,7 @@ class RuleBasedPlanProvider:
             bio_attr = "date_of_birth"
         elif "wife" in lowered or "spouse" in lowered:
             bio_attr = "spouse_name"
-        elif "children" in lowered:
+        elif "children" in lowered or "kids" in lowered or "child" in lowered:
             bio_attr = "children_count"
         elif "bowling style" in lowered:
             bio_attr = "bowling_style"
@@ -595,6 +618,15 @@ class RuleBasedPlanProvider:
 
         if bio_attr is not None:
             if "player" not in entities:
+                trailing_match = re.search(r"(?:of|does|for)\s+([a-z0-9 .'-]+)$", lowered)
+                if trailing_match:
+                    candidate_phrase = trailing_match.group(1).strip()
+                    resolved = semantic.resolve_player(candidate_phrase)
+                    if resolved.value:
+                        entities["player"] = resolved.value
+                    elif candidate_phrase:
+                        entities["player"] = candidate_phrase
+            if "player" not in entities:
                 return None
             return QueryPlan(
                 question=raw,
@@ -606,16 +638,9 @@ class RuleBasedPlanProvider:
                 filters=dict(entities),
             )
 
-        if "captain" in lowered or "coach" in lowered or "owner" in lowered or "owned" in lowered:
+        if "captain" in lowered or "coach" in lowered or "owner" in lowered or "owned" in lowered or "owns" in lowered:
             if "team" not in entities:
                 return None
-            if season is None:
-                return QueryPlan(
-                    question=raw,
-                    operation="clarify",
-                    entity="season",
-                    entities={"reason": "season_required_for_team_leadership", "candidates": []},
-                )
             leadership_metric = "captain" if "captain" in lowered else "coach" if "coach" in lowered else "owner"
             return QueryPlan(
                 question=raw,
@@ -625,6 +650,19 @@ class RuleBasedPlanProvider:
                 metric=leadership_metric,
                 metrics=[leadership_metric],
                 filters=dict(entities),
+            )
+
+        if season is not None and "final" in lowered and any(token in lowered for token in ("happened", "result", "winner")):
+            entities["match_type"] = "final"
+            return QueryPlan(
+                question=raw,
+                operation="lookup",
+                entity="match_result_summary",
+                entities=entities,
+                metric="result",
+                metrics=["result"],
+                filters=dict(entities),
+                limit=1,
             )
 
         if "next ball" in lowered or "prediction change" in lowered or "likely to happen" in lowered:
@@ -805,6 +843,43 @@ class RuleBasedPlanProvider:
                 group_by=["player"],
                 order_by="desc",
                 limit=semantic.extract_limit(lowered),
+            )
+
+        if "player" in entities and primary_metric is None:
+            return QueryPlan(
+                question=raw,
+                operation="knowledge_lookup",
+                entity="player_knowledge",
+                entities=entities,
+                metric="full_name",
+                metrics=["full_name"],
+                filters=dict(entities),
+            )
+
+        blocked_tokens = {
+            "tell",
+            "show",
+            "what",
+            "who",
+            "when",
+            "where",
+            "how",
+            "why",
+            "database",
+            "credentials",
+            "table",
+            "drop",
+            "delete",
+        }
+        if re.fullmatch(r"[a-z0-9 .'-]+", lowered) and len(tokens) <= 4 and not any(t in blocked_tokens for t in tokens):
+            return QueryPlan(
+                question=raw,
+                operation="knowledge_lookup",
+                entity="player_knowledge",
+                entities={"player": raw},
+                metric="full_name",
+                metrics=["full_name"],
+                filters={"player": raw},
             )
 
         return None
@@ -1614,22 +1689,34 @@ class QueryExecutor:
     def _team_season_info(self, plan: QueryPlan) -> dict[str, Any]:
         team = str(plan.entities.get("team", "")).strip()
         season = plan.entities.get("season")
-        if not team or not isinstance(season, int):
-            raise ValueError("team and season are required")
-        row = self._run(
-            """
-            SELECT captain, coach, owner, home_venue, source_key, source_url, retrieved_at, verification_status
-            FROM team_season_knowledge
-            WHERE canonical_team_name = ? AND season_id = ?
-            ORDER BY retrieved_at DESC
-            LIMIT 1
-            """,
-            (team, season),
-        )
+        if not team:
+            raise ValueError("team is required")
+        if isinstance(season, int):
+            row = self._run(
+                """
+                SELECT season_id, captain, coach, owner, home_venue, source_key, source_url, retrieved_at, verification_status
+                FROM team_season_knowledge
+                WHERE canonical_team_name = ? AND season_id = ?
+                ORDER BY retrieved_at DESC
+                LIMIT 1
+                """,
+                (team, season),
+            )
+        else:
+            row = self._run(
+                """
+                SELECT season_id, captain, coach, owner, home_venue, source_key, source_url, retrieved_at, verification_status
+                FROM team_season_knowledge
+                WHERE canonical_team_name = ?
+                ORDER BY season_id DESC, retrieved_at DESC
+                LIMIT 1
+                """,
+                (team,),
+            )
         if not row:
             return {
                 "value": None,
-                "label": "MatchGenome does not currently have verified information for that attribute.",
+                "label": "Verified information is not currently available.",
                 "evidence": {
                     "interpretation": "team season knowledge lookup",
                     "team": team,
@@ -1639,23 +1726,70 @@ class QueryExecutor:
             }
         item = row[0]
         attribute = str(plan.metric or "captain")
+        resolved_season = int(item["season_id"])
         value = item[attribute] if attribute in item.keys() else None
         if value is None or str(value).strip() == "":
-            label = "MatchGenome does not currently have verified information for that attribute."
+            label = "Verified information is not currently available."
         else:
-            label = f"{team} {attribute} in {season}"
+            label = f"{team} {attribute} in {resolved_season}"
         return {
             "value": value,
             "label": label,
             "evidence": {
                 "interpretation": "team season knowledge lookup",
                 "team": team,
-                "season": season,
+                "season": resolved_season,
                 "attribute": attribute,
                 "source": item["source_key"],
                 "source_url": item["source_url"],
                 "retrieved_at": item["retrieved_at"],
                 "verification_status": item["verification_status"],
+            },
+        }
+
+    def _match_result_summary(self, plan: QueryPlan) -> dict[str, Any]:
+        season = plan.entities.get("season")
+        if not isinstance(season, int):
+            raise ValueError("season is required")
+        match_type = str(plan.entities.get("match_type") or "").lower().strip()
+        sql = (
+            "SELECT match_id, match_date, match_number, team_a_display, team_b_display, winner, result_type, result_margin, venue, city "
+            "FROM match_metadata WHERE season_id = ?"
+        )
+        params: list[Any] = [season]
+        if match_type == "final":
+            sql += " AND LOWER(COALESCE(match_type, '')) = 'final'"
+        sql += " ORDER BY match_date DESC, match_id DESC LIMIT 1"
+        rows = self._run(sql, tuple(params))
+        if not rows:
+            return {
+                "value": None,
+                "label": "Verified information is not currently available.",
+                "evidence": {
+                    "interpretation": "match result summary lookup",
+                    "season": season,
+                    "match_type": match_type or None,
+                    "source_tables": ["match_metadata"],
+                },
+            }
+        row = rows[0]
+        return {
+            "value": {
+                "match_id": int(row["match_id"]),
+                "match_number": row["match_number"],
+                "date": row["match_date"],
+                "teams": [row["team_a_display"], row["team_b_display"]],
+                "winner": row["winner"],
+                "margin": f"{row['result_margin']} {row['result_type']}" if row["result_margin"] else None,
+                "venue": row["venue"],
+                "city": row["city"],
+            },
+            "label": "Match result summary",
+            "evidence": {
+                "interpretation": "match result summary lookup",
+                "season": season,
+                "match_type": match_type or None,
+                "source_tables": ["match_metadata"],
             },
         }
 
@@ -1757,6 +1891,8 @@ class QueryExecutor:
                 return self._aggregate_bowler_vs_team(plan)
             if plan.entity == "match_metadata":
                 return self._lookup_match_metadata(plan)
+            if plan.entity == "match_result_summary":
+                return self._match_result_summary(plan)
             if plan.entity == "player_vs_bowling_type":
                 return self._player_vs_bowling_type(plan)
 

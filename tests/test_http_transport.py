@@ -93,7 +93,7 @@ class HttpTransportTests(unittest.TestCase):
         with urlopen(self._url("/")) as response:
             body = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
-            self.assertIn("See the prediction before you see the outcome.", body)
+            self.assertIn("Know the game. Before it happens.", body)
 
     def test_local_player_asset_is_served(self) -> None:
         with urlopen(self._url("/assets/players/tm_head.svg")) as response:

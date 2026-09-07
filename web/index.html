@@ -10,19 +10,19 @@
     <main class="app" aria-live="polite">
       <header class="top-shell">
         <div class="brand-block">
-          <p class="eyebrow">MATCHGENOMEIPL</p>
-          <h1>IPL Cricket Intelligence: Predict. Replay. Understand.</h1>
-          <p class="lede">See the prediction before you see the outcome. Ground every call in historical IPL evidence.</p>
+          <p class="eyebrow">MATCHGENOME</p>
+          <h1>Know the game. Before it happens.</h1>
+          <p class="lede">IPL intelligence across knowledge, match context, prediction, and historical replay.</p>
         </div>
         <nav class="mode-nav" aria-label="Product navigation">
           <button id="goHomeBtn" type="button" class="primary">Home</button>
-          <button id="goFixturesBtn" type="button">Fixtures</button>
+          <button id="goMatchesBtn" type="button">Matches</button>
           <button id="goTeamsBtn" type="button">Teams</button>
-          <button id="goStatsBtn" type="button">Stats</button>
-          <button id="goTimeMachineBtn" type="button">Time Machine</button>
           <button id="goPlayerIntelligenceBtn" type="button">Players</button>
+          <button id="goStatsBtn" type="button">Stats</button>
+          <button id="goPredictBtn" type="button">Predict</button>
+          <button id="goReplayBtn" type="button">Replay</button>
           <button id="goAskBtn" type="button">Ask MatchGenome</button>
-          <button id="goMethodologyBtn" type="button">Methodology</button>
         </nav>
       </header>
 
@@ -30,28 +30,60 @@
 
       <section id="homeView" class="view">
         <section class="hero-card">
-          <h2>MATCHGENOMEIPL</h2>
-          <p class="headline">IPL Cricket Intelligence</p>
-          <p class="muted">Predict before the ball. Replay historical matches. Understand why probabilities move.</p>
+          <h2>MATCHGENOME</h2>
+          <p class="headline">Know the game. Before it happens.</p>
+          <p class="muted">A unified IPL intelligence workspace for knowledge, context, prediction, and replay.</p>
+          <div class="search-row">
+            <input id="homeAskInput" type="search" placeholder="Ask anything about the IPL..." />
+            <button id="homeAskBtn" class="primary" type="button">Ask</button>
+          </div>
           <div class="launch-grid">
             <article class="launch-card">
-              <p class="eyebrow">TIME MACHINE</p>
-              <h3>Replay real IPL history</h3>
-              <p>Travel through deliveries and compare prediction with reality.</p>
-              <button id="exploreMatchBtn" class="primary" type="button">Explore a Match</button>
+              <p class="eyebrow">CURRENT CONTEXT</p>
+              <h3>Upcoming Match</h3>
+              <p id="homeUpcoming" class="muted">Loading...</p>
             </article>
             <article class="launch-card">
-              <p class="eyebrow">ASK MATCHGENOME</p>
-              <h3>Ask anything about IPL history</h3>
-              <p>Query runs, sixes, match awards, phases, and player comparisons.</p>
-              <button id="openAskBtn" class="primary" type="button">Ask MatchGenome</button>
+              <p class="eyebrow">LATEST RESULT</p>
+              <h3>Most Recent Completed Match</h3>
+              <p id="homeLatest" class="muted">Loading...</p>
             </article>
             <article class="launch-card">
-              <p class="eyebrow">PLAYER INTELLIGENCE</p>
-              <h3>Understand players in context</h3>
-              <p>Explore form, phases, and matchup evidence with clear navigation.</p>
-              <button id="goPlayersIntroBtn" class="primary" type="button">Explore Players</button>
+              <p class="eyebrow">SEASON STATUS</p>
+              <h3>Current Points Leader</h3>
+              <p id="homeSeasonStatus" class="muted">Loading...</p>
             </article>
+          </div>
+          <div class="panel-block" id="homeSignals">
+            <p class="eyebrow">GENOME SIGNALS</p>
+            <p class="muted">Loading form, matchup, momentum, and replay signals...</p>
+          </div>
+          <div class="launch-grid">
+            <article class="launch-card">
+              <p class="eyebrow">EXPLORE</p>
+              <h3>Matches</h3>
+              <p>Fixtures, results, scorecards, and direct replay entry points.</p>
+              <button id="exploreMatchBtn" class="primary" type="button">Open Matches</button>
+            </article>
+            <article class="launch-card">
+              <p class="eyebrow">EXPLORE</p>
+              <h3>Teams</h3>
+              <p>Season-aware leadership, squad context, and linked player intelligence.</p>
+              <button id="goTeamsIntroBtn" class="primary" type="button">Open Teams</button>
+            </article>
+            <article class="launch-card">
+              <p class="eyebrow">EXPLORE</p>
+              <h3>Players</h3>
+              <p>Player identity, season trajectory, and matchup intelligence.</p>
+              <button id="goPlayersIntroBtn" class="primary" type="button">Open Players</button>
+            </article>
+          </div>
+          <div class="panel-block">
+            <p class="eyebrow">TIME MACHINE</p>
+            <div class="search-row">
+              <select id="homeReplaySeasonSelect"></select>
+              <button id="homeReplayBtn" type="button">Replay Historical Match</button>
+            </div>
           </div>
         </section>
       </section>
@@ -82,8 +114,12 @@
 
       <section id="fixturesView" class="view" hidden>
         <section class="hero-card">
-          <h2>Fixtures</h2>
-          <p class="muted">Unified fixtures/results listing. Click any match to open full match details and jump into Time Machine when needed.</p>
+          <h2>Matches</h2>
+          <p class="muted">Fixtures and results with scorecards, intelligence context, and replay entry points.</p>
+          <div class="workspace-tabs">
+            <button id="matchTabFixturesBtn" class="tab-btn active" type="button">Fixtures</button>
+            <button id="matchTabResultsBtn" class="tab-btn" type="button">Results</button>
+          </div>
           <div class="search-row fixtures-search-row">
             <select id="fixturesSeasonSelect"></select>
             <input id="fixturesTeamInput" type="search" placeholder="Filter team" />
@@ -96,7 +132,35 @@
             <button id="fixturesRefreshBtn" type="button">Refresh</button>
           </div>
           <div id="fixturesList" class="panel-block">Fixtures will appear here.</div>
+          <div id="resultsList" class="panel-block" hidden>Results will appear here.</div>
           <div id="fixtureDetail" class="panel-block" tabindex="-1">Click a match card to inspect match details.</div>
+        </section>
+      </section>
+
+      <section id="predictView" class="view" hidden>
+        <section class="hero-card">
+          <h2>Predict</h2>
+          <p class="muted">Use MatchGenome to project likely outcomes for matches, players, and scenarios.</p>
+          <div class="launch-grid">
+            <article class="launch-card">
+              <p class="eyebrow">MATCH PREDICTION</p>
+              <h3>Pre-ball replay prediction</h3>
+              <p>Start from a real match state and generate deterministic next-ball probabilities.</p>
+              <button id="predictToReplayBtn" class="primary" type="button">Open Replay Workspace</button>
+            </article>
+            <article class="launch-card">
+              <p class="eyebrow">PLAYER PREDICTION</p>
+              <h3>Player outcome context</h3>
+              <p>Use player intelligence and matchup evidence to understand likely outcomes.</p>
+              <button id="predictToPlayersBtn" type="button">Open Players</button>
+            </article>
+            <article class="launch-card">
+              <p class="eyebrow">SCENARIO PREDICTION</p>
+              <h3>Ask MatchGenome what is likely next</h3>
+              <p>Use natural language for next-ball and prediction-change guidance.</p>
+              <button id="predictToAskBtn" type="button">Open Ask</button>
+            </article>
+          </div>
         </section>
       </section>
 

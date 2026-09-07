@@ -73,22 +73,22 @@ class VisualQaRunner:
         self.results["checks"]["intro_paths_present"] = {
             "explore_match": self.driver.find_element(By.ID, "exploreMatchBtn").is_displayed(),
             "players": self.driver.find_element(By.ID, "goPlayersIntroBtn").is_displayed(),
-            "ask": self.driver.find_element(By.ID, "openAskBtn").is_displayed(),
+            "ask": self.driver.find_element(By.ID, "homeAskBtn").is_displayed(),
         }
 
         self._save("01_home")
         self._check_overflow("home")
 
-        self.driver.find_element(By.ID, "openAskBtn").click()
+        self.driver.find_element(By.ID, "homeAskBtn").click()
         self.wait.until(lambda d: not d.find_element(By.ID, "askView").get_attribute("hidden"))
         self._save("02_ask")
         self._check_overflow("ask")
 
         for nav_id, view_id, shot in [
-            ("goFixturesBtn", "fixturesView", "02a_fixtures"),
-            ("goResultsBtn", "resultsView", "02b_results"),
+            ("goMatchesBtn", "fixturesView", "02a_matches"),
             ("goTeamsBtn", "teamsView", "02c_teams"),
             ("goStatsBtn", "statsView", "02d_stats"),
+            ("goPredictBtn", "predictView", "02e_predict"),
         ]:
             btn = self.driver.find_element(By.ID, nav_id)
             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
@@ -96,6 +96,12 @@ class VisualQaRunner:
             self.wait.until(lambda d, target=view_id: not d.find_element(By.ID, target).get_attribute("hidden"))
             self._save(shot)
             self._check_overflow(shot)
+
+        self.driver.find_element(By.ID, "goMatchesBtn").click()
+        self.wait.until(lambda d: not d.find_element(By.ID, "fixturesView").get_attribute("hidden"))
+        self.driver.find_element(By.ID, "matchTabResultsBtn").click()
+        self._save("02b_results")
+        self._check_overflow("02b_results")
 
         self.driver.find_element(By.ID, "goAskBtn").click()
         self.wait.until(lambda d: not d.find_element(By.ID, "askView").get_attribute("hidden"))
@@ -127,7 +133,7 @@ class VisualQaRunner:
         )
         self._save("04_ask_empty_or_error")
 
-        tm_btn = self.driver.find_element(By.ID, "goTimeMachineBtn")
+        tm_btn = self.driver.find_element(By.ID, "goReplayBtn")
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", tm_btn)
         self.driver.execute_script("arguments[0].click();", tm_btn)
         self.wait.until(lambda d: not d.find_element(By.ID, "timeMachineView").get_attribute("hidden"))
@@ -238,7 +244,7 @@ class VisualQaRunner:
         }
         self.results["checks"]["player_photo_meta"] = self._text("#playerPhotoMeta")
 
-        self.driver.find_element(By.ID, "goTimeMachineBtn").click()
+        self.driver.find_element(By.ID, "goReplayBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "timeMachineView")))
         self.driver.find_element(By.ID, "tabPredictionBtn").click()
         batter_btn = self.driver.find_element(By.ID, "batterValue")

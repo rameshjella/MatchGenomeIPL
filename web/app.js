@@ -28,6 +28,7 @@ const api = {
 
 const state = {
   view: "home",
+  matchesTab: "fixtures",
   uiState: UiState.SELECT_MATCH,
   replayTab: "prediction",
   playerTab: "overview",
@@ -52,6 +53,7 @@ const state = {
 
 const els = {
   homeView: document.getElementById("homeView"),
+  predictView: document.getElementById("predictView"),
   askView: document.getElementById("askView"),
   fixturesView: document.getElementById("fixturesView"),
   teamsView: document.getElementById("teamsView"),
@@ -62,17 +64,25 @@ const els = {
   statusBanner: document.getElementById("statusBanner"),
 
   goHomeBtn: document.getElementById("goHomeBtn"),
-  goFixturesBtn: document.getElementById("goFixturesBtn"),
+  goMatchesBtn: document.getElementById("goMatchesBtn"),
   goTeamsBtn: document.getElementById("goTeamsBtn"),
+  goPredictBtn: document.getElementById("goPredictBtn"),
   goStatsBtn: document.getElementById("goStatsBtn"),
-  goTimeMachineBtn: document.getElementById("goTimeMachineBtn"),
+  goReplayBtn: document.getElementById("goReplayBtn"),
   goAskBtn: document.getElementById("goAskBtn"),
   goPlayerIntelligenceBtn: document.getElementById("goPlayerIntelligenceBtn"),
-  goMethodologyBtn: document.getElementById("goMethodologyBtn"),
 
   exploreMatchBtn: document.getElementById("exploreMatchBtn"),
-  openAskBtn: document.getElementById("openAskBtn"),
+  goTeamsIntroBtn: document.getElementById("goTeamsIntroBtn"),
   goPlayersIntroBtn: document.getElementById("goPlayersIntroBtn"),
+  homeAskInput: document.getElementById("homeAskInput"),
+  homeAskBtn: document.getElementById("homeAskBtn"),
+  homeUpcoming: document.getElementById("homeUpcoming"),
+  homeLatest: document.getElementById("homeLatest"),
+  homeSeasonStatus: document.getElementById("homeSeasonStatus"),
+  homeSignals: document.getElementById("homeSignals"),
+  homeReplaySeasonSelect: document.getElementById("homeReplaySeasonSelect"),
+  homeReplayBtn: document.getElementById("homeReplayBtn"),
 
   askInput: document.getElementById("askInput"),
   askSubmitBtn: document.getElementById("askSubmitBtn"),
@@ -84,7 +94,14 @@ const els = {
   fixturesStatusSelect: document.getElementById("fixturesStatusSelect"),
   fixturesRefreshBtn: document.getElementById("fixturesRefreshBtn"),
   fixturesList: document.getElementById("fixturesList"),
+  resultsList: document.getElementById("resultsList"),
+  matchTabFixturesBtn: document.getElementById("matchTabFixturesBtn"),
+  matchTabResultsBtn: document.getElementById("matchTabResultsBtn"),
   fixtureDetail: document.getElementById("fixtureDetail"),
+
+  predictToReplayBtn: document.getElementById("predictToReplayBtn"),
+  predictToPlayersBtn: document.getElementById("predictToPlayersBtn"),
+  predictToAskBtn: document.getElementById("predictToAskBtn"),
 
   teamsSelect: document.getElementById("teamsSelect"),
   teamSeasonSelect: document.getElementById("teamSeasonSelect"),
@@ -201,6 +218,7 @@ function parseRoute() {
   const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   return {
     view: params.get("view") || "home",
+    tab: params.get("tab") || "",
     player: params.get("player") || "",
     seasonId: params.get("season_id") || "",
     matchId: params.get("match_id") || "",
@@ -272,29 +290,32 @@ function setView(view) {
   state.view = view;
   const map = {
     home: els.homeView,
+    predict: els.predictView,
     ask: els.askView,
-    fixtures: els.fixturesView,
+    matches: els.fixturesView,
     teams: els.teamsView,
     stats: els.statsView,
-    time_machine: els.timeMachineView,
+    replay: els.timeMachineView,
     player: els.playerView,
     methodology: els.methodologyView,
   };
   Object.entries(map).forEach(([name, node]) => {
+    if (!node) return;
     node.hidden = name !== view;
   });
 
   const nav = [
     [els.goHomeBtn, view === "home"],
-    [els.goFixturesBtn, view === "fixtures"],
+    [els.goMatchesBtn, view === "matches"],
     [els.goTeamsBtn, view === "teams"],
+    [els.goPredictBtn, view === "predict"],
     [els.goStatsBtn, view === "stats"],
-    [els.goTimeMachineBtn, view === "time_machine"],
+    [els.goReplayBtn, view === "replay"],
     [els.goAskBtn, view === "ask"],
     [els.goPlayerIntelligenceBtn, view === "player"],
-    [els.goMethodologyBtn, view === "methodology"],
   ];
   nav.forEach(([button, active]) => {
+    if (!button) return;
     button.classList.toggle("primary", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
@@ -317,12 +338,27 @@ function formatMatchCard(item) {
 
 function fixturesRoute(matchId = "") {
   return {
-    view: "fixtures",
+    view: "matches",
+    tab: state.matchesTab,
     season_id: Number(els.fixturesSeasonSelect.value || 0) || "",
     status: (els.fixturesStatusSelect.value || "").trim(),
     team: (els.fixturesTeamInput.value || "").trim(),
     match_id: matchId,
   };
+}
+
+function setMatchesTab(tab) {
+  state.matchesTab = tab === "results" ? "results" : "fixtures";
+  if (els.matchTabFixturesBtn) {
+    els.matchTabFixturesBtn.classList.toggle("active", state.matchesTab === "fixtures");
+  }
+  if (els.matchTabResultsBtn) {
+    els.matchTabResultsBtn.classList.toggle("active", state.matchesTab === "results");
+  }
+  els.fixturesList.hidden = state.matchesTab !== "fixtures";
+  if (els.resultsList) {
+    els.resultsList.hidden = state.matchesTab !== "results";
+  }
 }
 
 function focusFixtureDetail() {
@@ -356,6 +392,26 @@ async function loadFixtures() {
       event.stopPropagation();
       const matchId = Number(node.getAttribute("data-match-id") || 0);
       if (!matchId) return;
+      setRoute(fixturesRoute(matchId));
+      loadFixtureDetail(matchId).catch((err) => setStatus(err.message || "Failed to load match details", "error"));
+    });
+  });
+}
+
+async function loadResults() {
+  const season = Number(els.fixturesSeasonSelect.value || 0);
+  const team = (els.fixturesTeamInput.value || "").trim();
+  const q = [`season_id=${season}`];
+  if (team) q.push(`team=${encodeURIComponent(team)}`);
+  const payload = await api.get(`/api/results?${q.join("&")}`);
+  const rows = payload.results || [];
+  if (!els.resultsList) return;
+  els.resultsList.innerHTML = rows.length ? rows.map(formatMatchCard).join("") : "<p class='muted'>No completed matches found for this filter.</p>";
+  els.resultsList.querySelectorAll(".fixture-card").forEach((node) => {
+    node.addEventListener("click", () => {
+      const matchId = Number(node.getAttribute("data-match-id") || 0);
+      if (!matchId) return;
+      state.selectedFixtureMatchId = matchId;
       setRoute(fixturesRoute(matchId));
       loadFixtureDetail(matchId).catch((err) => setStatus(err.message || "Failed to load match details", "error"));
     });
@@ -435,7 +491,7 @@ async function loadFixtureDetail(matchId) {
   const btn = document.getElementById("openFixtureInTimeMachineBtn");
   if (btn) {
     btn.addEventListener("click", () => {
-      setRoute({ view: "time_machine", season_id: match.season_id, match_id: matchId });
+      setRoute({ view: "replay", season_id: match.season_id, match_id: matchId });
     });
   }
   focusFixtureDetail();
@@ -495,17 +551,55 @@ async function loadStatsWorkspace() {
   const wickets = (top.top_performers?.wickets || []).map((r) => `<li>${r.player}: ${r.value}</li>`).join("");
   els.topPerformersBlock.innerHTML = `
     <h4>Top Performers</h4>
-    <p><strong>Runs</strong></p><ul>${runs || "<li>No data</li>"}</ul>
-    <p><strong>Wickets</strong></p><ul>${wickets || "<li>No data</li>"}</ul>
+    <p><strong>Orange Cap Signal (Runs)</strong></p><ul>${runs || "<li>No data</li>"}</ul>
+    <p><strong>Purple Cap Signal (Wickets)</strong></p><ul>${wickets || "<li>No data</li>"}</ul>
   `;
   els.pointsTableBlock.innerHTML = `
     <h4>Points Table</h4>
-    <div class='table-wrap'><table class='mini-table'><thead><tr><th>Team</th><th>M</th><th>W</th><th>L</th><th>NR</th><th>Pts</th><th>NRR</th></tr></thead><tbody>
+    <div class='table-wrap'><table class='mini-table'><thead><tr><th>Team</th><th>P</th><th>W</th><th>L</th><th>NR</th><th>Pts</th><th>NRR</th></tr></thead><tbody>
       ${(table.table || [])
         .map((r) => `<tr><td>${r.team}</td><td>${r.matches}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.no_result}</td><td>${r.points}</td><td>${r.net_run_rate}</td></tr>`)
         .join("")}
     </tbody></table></div>
   `;
+}
+
+async function loadHomeLaunchpad() {
+  const season = Number(els.statsSeasonSelect.value || 0);
+  const [fixturesPayload, resultsPayload, topPayload, tablePayload] = await Promise.all([
+    api.get(`/api/fixtures?season_id=${season}`),
+    api.get(`/api/results?season_id=${season}`),
+    api.get(`/api/stats/top-performers?season_id=${season}&limit=1`),
+    api.get(`/api/stats/points-table?season_id=${season}`),
+  ]);
+
+  const fixtures = fixturesPayload.fixtures || [];
+  const upcoming = fixtures.find((row) => row.status === "upcoming" || row.status === "scheduled") || fixtures[0];
+  const latest = (resultsPayload.results || []).slice(-1)[0];
+  const leader = (tablePayload.table || [])[0];
+  const topRun = (((topPayload.top_performers || {}).runs || [])[0]) || null;
+  const topWicket = (((topPayload.top_performers || {}).wickets || [])[0]) || null;
+
+  if (els.homeUpcoming) {
+    els.homeUpcoming.textContent = upcoming
+      ? `${teamLabel(upcoming.team_a, "Team A")} vs ${teamLabel(upcoming.team_b, "Team B")} | ${upcoming.match_date || "Date unavailable"}`
+      : "Verified information is not currently available.";
+  }
+  if (els.homeLatest) {
+    els.homeLatest.textContent = latest
+      ? `${teamLabel(latest.team_a, "Team A")} vs ${teamLabel(latest.team_b, "Team B")} | ${latest.winner || "Result pending"}`
+      : "Verified information is not currently available.";
+  }
+  if (els.homeSeasonStatus) {
+    els.homeSeasonStatus.textContent = leader
+      ? `${leader.team} lead with ${leader.points} points (NRR ${leader.net_run_rate})`
+      : "Verified information is not currently available.";
+  }
+  if (els.homeSignals) {
+    const runSignal = topRun ? `${topRun.player} leads runs (${topRun.value}).` : "Run leader unavailable.";
+    const wicketSignal = topWicket ? `${topWicket.player} leads wickets (${topWicket.value}).` : "Wicket leader unavailable.";
+    els.homeSignals.innerHTML = `<p class='eyebrow'>GENOME SIGNALS</p><p>${runSignal}</p><p>${wicketSignal}</p><p class='muted'>Use Replay for similar situations and pre-ball prediction checks.</p>`;
+  }
 }
 
 function setReplayTab(tab) {
@@ -1319,10 +1413,9 @@ function renderAskResults(payload) {
         ${formatAskValue(item.result?.value)}
         <p class='muted'>Evidence</p>
         <p>${item.result?.label || "Answer from local IPL data."}</p>
-        <p class='muted'>${evidence.source || "MatchGenome IPL database"} · ${evidence.scope || ""}</p>
-        <p class='muted'>Filters used: ${formatPlanFilters((item.query_plan && item.query_plan.filters) || {})}</p>
+        <p class='muted'>${evidence.source || "MatchGenome IPL database"}</p>
         ${player ? `<div class='row-actions'><button type='button' class='ask-player-link' data-player='${player}'>Open Player Intelligence</button></div>` : ""}
-        <details><summary>Resolution details</summary>${formatResolutionEntities((item.query_plan && item.query_plan.entities) || {})}</details>
+        <details><summary>Show evidence details</summary>${formatResolutionEntities((item.result && item.result.evidence) || {})}</details>
       </article>`;
     })
     .join("");
@@ -1567,15 +1660,16 @@ function syncRoute() {
     return;
   }
 
-  if (route.view === "fixtures") {
-    setView("fixtures");
+  if (route.view === "matches" || route.view === "fixtures" || route.view === "results") {
+    setView("matches");
+    setMatchesTab(route.view === "results" ? "results" : route.tab || "fixtures");
     if (route.seasonId) {
       els.fixturesSeasonSelect.value = String(route.seasonId);
     }
-    if (route.status) {
+    if (route.status && state.matchesTab === "fixtures") {
       els.fixturesStatusSelect.value = String(route.status);
     } else {
-      els.fixturesStatusSelect.value = "";
+      els.fixturesStatusSelect.value = state.matchesTab === "results" ? "completed" : "";
     }
     if (route.team) {
       els.fixturesTeamInput.value = String(route.team);
@@ -1589,6 +1683,12 @@ function syncRoute() {
       els.fixtureDetail.innerHTML = "Click a match card to inspect match details.";
     }
     loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error"));
+    loadResults().catch((err) => setStatus(err.message || "Failed to load results", "error"));
+    return;
+  }
+
+  if (route.view === "predict") {
+    setView("predict");
     return;
   }
 
@@ -1604,14 +1704,9 @@ function syncRoute() {
     return;
   }
 
-  if (route.view === "time_machine") {
-    setView("time_machine");
+  if (route.view === "replay" || route.view === "time_machine") {
+    setView("replay");
     selectMatchInTimeMachine(route.seasonId, route.matchId).catch((err) => setStatus(err.message || "Failed to load match", "error"));
-    return;
-  }
-
-  if (route.view === "results") {
-    setRoute({ view: "fixtures", status: "completed" });
     return;
   }
 
@@ -1621,21 +1716,55 @@ function syncRoute() {
   }
 
   setView("home");
+  loadHomeLaunchpad().catch((err) => setStatus(err.message || "Failed to load home context", "error"));
 }
 
 function attachEvents() {
   els.goHomeBtn.addEventListener("click", () => setRoute({ view: "home" }));
-  els.goFixturesBtn.addEventListener("click", () => setRoute({ view: "fixtures" }));
+  els.goMatchesBtn.addEventListener("click", () => setRoute({ view: "matches", tab: state.matchesTab }));
   els.goTeamsBtn.addEventListener("click", () => setRoute({ view: "teams" }));
+  els.goPredictBtn.addEventListener("click", () => setRoute({ view: "predict" }));
   els.goStatsBtn.addEventListener("click", () => setRoute({ view: "stats" }));
-  els.goTimeMachineBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
+  els.goReplayBtn.addEventListener("click", () => setRoute({ view: "replay" }));
   els.goAskBtn.addEventListener("click", () => setRoute({ view: "ask" }));
   els.goPlayerIntelligenceBtn.addEventListener("click", () => setRoute({ view: "player", player: state.activePlayer || "" }));
-  els.goMethodologyBtn.addEventListener("click", () => setRoute({ view: "methodology" }));
 
-  els.exploreMatchBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
-  els.openAskBtn.addEventListener("click", () => setRoute({ view: "ask" }));
+  els.exploreMatchBtn.addEventListener("click", () => setRoute({ view: "matches" }));
+  if (els.goTeamsIntroBtn) {
+    els.goTeamsIntroBtn.addEventListener("click", () => setRoute({ view: "teams" }));
+  }
   els.goPlayersIntroBtn.addEventListener("click", () => setRoute({ view: "player", player: state.activePlayer || "" }));
+  if (els.homeAskBtn && els.homeAskInput) {
+    els.homeAskBtn.addEventListener("click", () => {
+      const question = (els.homeAskInput.value || "").trim();
+      if (question) {
+        els.askInput.value = question;
+      }
+      setRoute({ view: "ask" });
+    });
+    els.homeAskInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const question = (els.homeAskInput.value || "").trim();
+      if (!question) return;
+      els.askInput.value = question;
+      setRoute({ view: "ask" });
+    });
+  }
+  if (els.homeReplayBtn) {
+    els.homeReplayBtn.addEventListener("click", () => {
+      const season = Number(els.homeReplaySeasonSelect?.value || 0);
+      setRoute({ view: "replay", season_id: season || "" });
+    });
+  }
+  if (els.predictToReplayBtn) {
+    els.predictToReplayBtn.addEventListener("click", () => setRoute({ view: "replay" }));
+  }
+  if (els.predictToPlayersBtn) {
+    els.predictToPlayersBtn.addEventListener("click", () => setRoute({ view: "player" }));
+  }
+  if (els.predictToAskBtn) {
+    els.predictToAskBtn.addEventListener("click", () => setRoute({ view: "ask" }));
+  }
 
   els.askSubmitBtn.addEventListener("click", () => runAsk().catch((err) => setStatus(err.message || "Ask failed.", "error")));
 
@@ -1648,8 +1777,23 @@ function attachEvents() {
   })();
   els.fixturesRefreshBtn.addEventListener("click", () => setRoute(fixturesRoute(state.selectedFixtureMatchId || "")));
   els.fixturesSeasonSelect.addEventListener("change", () => setRoute(fixturesRoute()));
-  els.fixturesStatusSelect.addEventListener("change", () => setRoute(fixturesRoute()));
+  els.fixturesStatusSelect.addEventListener("change", () => {
+    state.matchesTab = "fixtures";
+    setRoute(fixturesRoute());
+  });
   els.fixturesTeamInput.addEventListener("input", debouncedFixturesRoute);
+  if (els.matchTabFixturesBtn) {
+    els.matchTabFixturesBtn.addEventListener("click", () => {
+      state.matchesTab = "fixtures";
+      setRoute(fixturesRoute(state.selectedFixtureMatchId || ""));
+    });
+  }
+  if (els.matchTabResultsBtn) {
+    els.matchTabResultsBtn.addEventListener("click", () => {
+      state.matchesTab = "results";
+      setRoute(fixturesRoute(state.selectedFixtureMatchId || ""));
+    });
+  }
   els.teamLoadBtn.addEventListener("click", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
   els.teamsSelect.addEventListener("change", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
   els.teamSeasonSelect.addEventListener("change", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
@@ -1700,8 +1844,8 @@ function attachEvents() {
   els.tabBallByBallBtn.addEventListener("click", () => setReplayTab("ball_by_ball"));
   els.tabEvidenceBtn.addEventListener("click", () => setReplayTab("evidence"));
 
-  els.backToReplayBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
-  els.exploreReplayBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
+  els.backToReplayBtn.addEventListener("click", () => setRoute({ view: "replay" }));
+  els.exploreReplayBtn.addEventListener("click", () => setRoute({ view: "replay" }));
   els.closePlayerBtn.addEventListener("click", () => {
     state.activePlayer = null;
     setRoute({ view: "player", player: "" });
@@ -1729,7 +1873,8 @@ async function bootstrap() {
     await loadMatches();
     await loadInnings();
     await loadTeams();
-    [els.fixturesSeasonSelect, els.statsSeasonSelect, els.teamSeasonSelect].forEach((node) => {
+    [els.fixturesSeasonSelect, els.statsSeasonSelect, els.teamSeasonSelect, els.homeReplaySeasonSelect].forEach((node) => {
+      if (!node) return;
       node.innerHTML = "";
       state.seasons.forEach((s) => node.appendChild(option(`Season ${s.season_id}`, s.season_id)));
     });

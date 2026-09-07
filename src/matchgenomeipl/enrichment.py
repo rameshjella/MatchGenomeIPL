@@ -46,6 +46,14 @@ PLAYER_KNOWLEDGE_SEED: list[dict[str, Any]] = [
         "aliases": ["virat kohli", "virat", "kohli"],
     },
     {
+        "canonical_player_name": "V Suryavanshi",
+        "full_name": "Vaibhav Suryavanshi",
+        "role": "Top-order batter",
+        "source_url": "https://www.iplt20.com/",
+        "verification_status": "provisional",
+        "aliases": ["v suryavanshi", "vaibhav suryavanshi", "vaibhav sooryavanshi"],
+    },
+    {
         "canonical_player_name": "RG Sharma",
         "full_name": "Rohit Gurunath Sharma",
         "date_of_birth": "1987-04-30",
@@ -82,6 +90,16 @@ TEAM_SEASON_KNOWLEDGE_SEED: list[dict[str, Any]] = [
         "owner": "Indiawin Sports",
         "home_venue": "Wankhede Stadium",
         "source_url": "https://www.iplt20.com/teams/mumbai-indians",
+        "verification_status": "provisional",
+    },
+    {
+        "canonical_team_name": "Chennai Super Kings",
+        "season_id": 2018,
+        "captain": "MS Dhoni",
+        "coach": "Stephen Fleming",
+        "owner": "India Cements",
+        "home_venue": "MA Chidambaram Stadium",
+        "source_url": "https://www.iplt20.com/teams/chennai-super-kings",
         "verification_status": "provisional",
     },
     {

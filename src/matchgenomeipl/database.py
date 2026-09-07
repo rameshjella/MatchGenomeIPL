@@ -254,6 +254,26 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
             notes TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS player_identity (
+            player_id TEXT PRIMARY KEY,
+            canonical_name TEXT NOT NULL UNIQUE,
+            full_name TEXT,
+            display_name TEXT,
+            short_name TEXT,
+            initials TEXT,
+            role TEXT,
+            batting_style TEXT,
+            bowling_style TEXT,
+            aliases_json TEXT,
+            source_names_json TEXT,
+            source_identifiers_json TEXT,
+            identity_confidence REAL NOT NULL DEFAULT 0.0,
+            verification_status TEXT NOT NULL,
+            source TEXT NOT NULL,
+            source_url TEXT,
+            retrieved_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS player_identity_alias (
             alias_id INTEGER PRIMARY KEY AUTOINCREMENT,
             alias_name TEXT NOT NULL,
@@ -489,6 +509,9 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_player_identity_alias_alias
             ON player_identity_alias(alias_name);
+
+        CREATE INDEX IF NOT EXISTS idx_player_identity_canonical
+            ON player_identity(canonical_name);
 
         CREATE INDEX IF NOT EXISTS idx_team_season_knowledge_team_season
             ON team_season_knowledge(canonical_team_name, season_id);
