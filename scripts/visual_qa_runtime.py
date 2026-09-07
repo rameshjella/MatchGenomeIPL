@@ -66,18 +66,36 @@ class VisualQaRunner:
         self.wait.until(EC.visibility_of_element_located((By.ID, "homeView")))
 
         self.results["checks"]["five_second_branding"] = {
-            "h1": self._text(".brand h1"),
-            "descriptor": self._text(".brand .eyebrow"),
+            "h1": self._text(".brand-block h1"),
+            "descriptor": self._text(".brand-block .eyebrow"),
         }
         self.results["checks"]["intro_paths_present"] = {
             "explore_match": self.driver.find_element(By.ID, "exploreMatchBtn").is_displayed(),
             "players": self.driver.find_element(By.ID, "goPlayersIntroBtn").is_displayed(),
+            "ask": self.driver.find_element(By.ID, "openAskBtn").is_displayed(),
         }
 
         self._save("01_home")
         self._check_overflow("home")
 
-        self.driver.find_element(By.ID, "exploreMatchBtn").click()
+        self.driver.find_element(By.ID, "openAskBtn").click()
+        self.wait.until(lambda d: not d.find_element(By.ID, "askView").get_attribute("hidden"))
+        self._save("02_ask")
+        self._check_overflow("ask")
+
+        ask_input = self.driver.find_element(By.ID, "askInput")
+        ask_input.clear()
+        ask_input.send_keys("How many sixes did MS Dhoni hit in 2014?")
+        self.driver.find_element(By.ID, "askSubmitBtn").click()
+        self.wait.until(
+            lambda d: len(d.find_element(By.ID, "askResults").text.strip()) > 10
+            and "Answers appear here" not in d.find_element(By.ID, "askResults").text
+        )
+        self._save("03_ask_result")
+
+        tm_btn = self.driver.find_element(By.ID, "goTimeMachineBtn")
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", tm_btn)
+        self.driver.execute_script("arguments[0].click();", tm_btn)
         self.wait.until(lambda d: not d.find_element(By.ID, "timeMachineView").get_attribute("hidden"))
         self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#matchCards .match-card")) > 0)
 
@@ -91,20 +109,20 @@ class VisualQaRunner:
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", cards[0])
         self.driver.execute_script("arguments[0].click();", cards[0])
         self.wait.until(lambda d: d.find_element(By.ID, "inningsSelect").get_attribute("value") is not None)
-        self._save("02_match_discovery")
+        self._save("04_match_discovery")
         self._check_overflow("discovery")
 
         start_btn = self.driver.find_element(By.ID, "startReplayBtn")
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", start_btn)
         self.driver.execute_script("arguments[0].click();", start_btn)
         self.wait.until(EC.visibility_of_element_located((By.ID, "replayPanel")))
-        self._save("03_selected_match")
+        self._save("05_match_workspace")
 
         predict_btn = self.driver.find_element(By.ID, "predictBtn")
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", predict_btn)
         self.driver.execute_script("arguments[0].click();", predict_btn)
         self.wait.until(lambda d: d.find_element(By.ID, "predictedTop").text.strip() not in {"", "-"})
-        self._save("04_before_ball_prediction")
+        self._save("06_before_ball_prediction")
         self._check_overflow("prediction")
 
         actual_before = self._text("#actualBlock")
@@ -112,21 +130,21 @@ class VisualQaRunner:
 
         self.driver.find_element(By.ID, "tabEvidenceBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "panelEvidence")))
-        self._save("07_evidence")
+        self._save("09_evidence")
         self._check_overflow("evidence")
 
         self.driver.find_element(By.ID, "tabPredictionBtn").click()
         reveal_btn = self.driver.find_element(By.ID, "revealBtn")
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", reveal_btn)
         self.driver.execute_script("arguments[0].click();", reveal_btn)
-        self.wait.until(lambda d: "Actual Outcome" in d.find_element(By.ID, "actualBlock").text)
+        self.wait.until(lambda d: "The Ball Happened" in d.find_element(By.ID, "actualBlock").text)
         self.results["checks"]["replay_accuracy_semantics"] = self._text("#accuracyValue")
-        self._save("05_reveal_state")
+        self._save("07_reveal")
         self._check_overflow("reveal")
 
         self.driver.find_element(By.ID, "tabBallByBallBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "panelBallByBall")))
-        self._save("06_ball_by_ball")
+        self._save("08_ball_by_ball")
         self._check_overflow("ball_by_ball")
 
         self.driver.find_element(By.ID, "goPlayerIntelligenceBtn").click()
@@ -137,20 +155,20 @@ class VisualQaRunner:
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_btn)
         self.driver.execute_script("arguments[0].click();", search_btn)
         self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")) > 0)
-        self._save("08_player_search")
+        self._save("10_player_search")
 
         first_result = self.driver.find_elements(By.CSS_SELECTOR, "#playerSearchResults .search-result")[0]
         first_result.click()
         self.wait.until(lambda d: d.find_element(By.ID, "playerPanel").is_displayed())
-        self._save("09_player_overview")
+        self._save("11_player_overview")
         self._check_overflow("player_overview")
 
         for tab_id, shot in [
-            ("playerTabBattingBtn", "10_player_batting"),
-            ("playerTabBowlingBtn", "11_player_bowling"),
-            ("playerTabMatchupsBtn", "12_player_matchups"),
-            ("playerTabSeasonsBtn", "13_player_seasons"),
-            ("playerTabPhasesBtn", "14_player_phases"),
+            ("playerTabBattingBtn", "12_player_batting"),
+            ("playerTabBowlingBtn", "13_player_bowling"),
+            ("playerTabMatchupsBtn", "14_player_matchups"),
+            ("playerTabSeasonsBtn", "15_player_seasons"),
+            ("playerTabPhasesBtn", "16_player_phases"),
         ]:
             nodes = self.driver.find_elements(By.ID, tab_id)
             if nodes and nodes[0].is_displayed():
@@ -170,11 +188,11 @@ class VisualQaRunner:
         batter_btn.click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "playerView")))
         self.wait.until(lambda d: d.find_element(By.ID, "playerPanel").is_displayed())
-        self._save("15_match_to_player_navigation")
+        self._save("17_match_to_player_navigation")
 
         self.driver.find_element(By.ID, "backToReplayBtn").click()
         self.wait.until(EC.visibility_of_element_located((By.ID, "timeMachineView")))
-        self._save("16_player_to_match_navigation")
+        self._save("18_player_to_match_navigation")
 
         # Keyboard focus progression sanity check.
         body = self.driver.find_element(By.TAG_NAME, "body")

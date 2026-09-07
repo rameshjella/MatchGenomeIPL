@@ -8,164 +8,158 @@
   </head>
   <body>
     <main class="app" aria-live="polite">
-      <header class="app-shell card">
-        <div class="brand">
-          <h1>MatchGenomeIPL</h1>
-          <p class="eyebrow">See the prediction before you see the outcome.</p>
-          <p>Explore IPL history ball by ball, see what MatchGenome predicted before each delivery, reveal what actually happened, and understand the evidence behind the call.</p>
+      <header class="top-shell">
+        <div class="brand-block">
+          <p class="eyebrow">MATCHGENOMEIPL</p>
+          <h1>See the prediction before you see the outcome.</h1>
+          <p class="lede">Explore IPL history ball by ball, see what MatchGenome predicted before each delivery, reveal what actually happened, and understand the evidence behind the call.</p>
         </div>
         <nav class="mode-nav" aria-label="Product navigation">
-          <button id="goHomeBtn" class="primary" type="button" aria-current="page">Home</button>
+          <button id="goHomeBtn" type="button" class="primary">Home</button>
           <button id="goTimeMachineBtn" type="button">Time Machine</button>
+          <button id="goAskBtn" type="button">Ask MatchGenome</button>
           <button id="goPlayerIntelligenceBtn" type="button">Players</button>
           <button id="goMethodologyBtn" type="button">Methodology</button>
         </nav>
       </header>
 
-      <section id="homeView" class="view-stack">
-        <section class="card intro" id="productIntro" aria-label="Product intro">
+      <section id="statusBanner" class="status" hidden></section>
+
+      <section id="homeView" class="view">
+        <section class="hero-card">
           <h2>MATCHGENOMEIPL</h2>
-          <h3>See the prediction before you see the outcome.</h3>
-          <p class="muted">Explore real IPL history through the signature loop: <strong>Before the Ball -> Prediction -> Reveal -> Actual -> Learn</strong>.</p>
+          <p class="headline">ASK -> DISCOVER -> PREDICT -> REVEAL -> UNDERSTAND</p>
+          <p class="muted">MatchGenomeIPL is an interactive IPL intelligence studio built around prediction before reveal.</p>
           <div class="launch-grid">
             <article class="launch-card">
               <p class="eyebrow">TIME MACHINE</p>
-              <h4>Replay the IPL</h4>
-              <p class="muted">See what MatchGenome predicted before the ball, then reveal reality.</p>
+              <h3>Replay real IPL history</h3>
+              <p>Travel through deliveries and compare prediction with reality.</p>
               <button id="exploreMatchBtn" class="primary" type="button">Explore a Match</button>
             </article>
             <article class="launch-card">
-              <p class="eyebrow">PLAYER INTELLIGENCE</p>
-              <h4>Understand the players</h4>
-              <p class="muted">Explore batting, bowling, phases, matchups and historical patterns.</p>
-              <button id="goPlayersIntroBtn" type="button">Explore Players</button>
+              <p class="eyebrow">ASK MATCHGENOME</p>
+              <h3>Ask anything about IPL history</h3>
+              <p>Query runs, sixes, match awards, phases, and player comparisons.</p>
+              <button id="openAskBtn" class="primary" type="button">Ask MatchGenome</button>
             </article>
             <article class="launch-card">
-              <p class="eyebrow">FEATURED REPLAY</p>
-              <h4>First Ball Experience</h4>
-              <p class="muted">Jump into a deterministic real-data replay and try prediction vs reality.</p>
-              <button id="openFeaturedReplayBtn" type="button">Open Featured Replay</button>
+              <p class="eyebrow">PLAYER INTELLIGENCE</p>
+              <h3>Understand players in context</h3>
+              <p>Explore form, phases, and matchup evidence with clear navigation.</p>
+              <button id="goPlayersIntroBtn" class="primary" type="button">Explore Players</button>
             </article>
           </div>
         </section>
       </section>
 
-      <section id="methodologyView" class="view-stack" hidden>
-        <section class="card">
-          <h2>Methodology</h2>
-          <p class="muted">MatchGenomeIPL predicts the next outcome using only data available before each historical ball, then reveals reality and scores correctness.</p>
-          <ul>
-            <li>Prediction appears first, actual outcome is hidden until reveal.</li>
-            <li>Analytical delivery truth remains in SQLite and is not overwritten by enrichment.</li>
-            <li>Match and team identity metadata is enriched from Cricsheet IPL JSON with provenance.</li>
-            <li>Technical evidence remains available through progressive disclosure.</li>
-          </ul>
+      <section id="askView" class="view" hidden>
+        <section class="ask-layout">
+          <article class="ask-composer">
+            <h2>Ask MatchGenome</h2>
+            <p class="muted">Ask MatchGenome anything about IPL</p>
+            <label class="sr-only" for="askInput">Question</label>
+            <textarea id="askInput" rows="3" placeholder="How many sixes did Dhoni hit in 2014?"></textarea>
+            <div class="row-actions">
+              <button id="askSubmitBtn" class="primary" type="button">Ask</button>
+            </div>
+            <div class="ask-examples" id="askExamples">
+              <button type="button" data-prompt="How many sixes did Dhoni hit in 2014?">How many sixes did Dhoni hit in 2014?</button>
+              <button type="button" data-prompt="Who was man of the match in the 2014 final?">Who was man of the match in the 2014 final?</button>
+              <button type="button" data-prompt="Compare Kohli and Dhoni in death overs.">Compare Kohli and Dhoni in death overs.</button>
+              <button type="button" data-prompt="How many wickets did Bumrah take in 2019?">How many wickets did Bumrah take in 2019?</button>
+              <button type="button" data-prompt="Show Rohit's best IPL season.">Show Rohit's best IPL season.</button>
+            </div>
+          </article>
+          <article class="ask-results" id="askResults">
+            <p class="muted">Answers appear here with evidence and query interpretation.</p>
+          </article>
         </section>
       </section>
 
-      <section id="statusBanner" class="status card" hidden></section>
+      <section id="timeMachineView" class="view" hidden>
+        <h2 class="sr-only">Match Discovery</h2>
+        <section class="time-machine-layout">
+          <aside class="discovery-pane">
+            <h3>Match Discovery</h3>
+            <p class="muted">Find a real IPL match by season, team, date, player, or match number.</p>
+            <p id="teamDataNotice" class="muted" hidden></p>
+            <label>Season <select id="seasonSelect"></select></label>
+            <label>Find match <input id="matchSearchInput" type="search" placeholder="Search teams, venue, date, match ID" /></label>
+            <label>Filter team <select id="teamFilterSelect"><option value="">All teams</option></select></label>
+            <label>Innings <select id="inningsSelect"></select></label>
+            <p id="matchListSummary" class="muted"></p>
+            <p id="selectedMatchMeta" class="muted">Select a match card to continue.</p>
+            <div id="matchCards" class="match-cards" role="list" aria-label="Match cards"></div>
+            <button id="startReplayBtn" class="primary" type="button" disabled>Replay this match</button>
+          </aside>
 
-      <section id="timeMachineView" class="view-stack" hidden>
-        <section class="selector card" aria-label="Match discovery">
-          <h2>Match Discovery</h2>
-          <p class="muted">Choose a season, find a match by teams, then pick innings to start replay.</p>
-          <p id="teamDataNotice" class="muted" hidden></p>
-          <div class="selector-grid discovery-grid">
-            <label>Season
-              <select id="seasonSelect"></select>
-            </label>
-            <label>Find match
-              <input id="matchSearchInput" type="search" placeholder="Search by team or match ID" />
-            </label>
-            <label>Innings
-              <select id="inningsSelect"></select>
-            </label>
-          </div>
-          <div id="matchListSummary" class="muted"></div>
-          <div id="selectedMatchMeta" class="selected-match muted">Select a match card to continue.</div>
-          <div id="matchCards" class="match-cards" role="list" aria-label="Match cards"></div>
-          <button id="startReplayBtn" class="primary" disabled>Start Time Machine Replay</button>
-        </section>
+          <section id="replayPanel" class="workspace-pane" hidden>
+            <header class="workspace-header">
+              <h3 id="matchTitle">Replay Workspace</h3>
+              <p id="matchSubline" class="muted">Select a match to begin.</p>
+              <p id="replayTeamNotice" class="muted" hidden></p>
+              <div class="header-metrics">
+                <div><span>Teams</span><strong id="teamsValue">-</strong></div>
+                <div><span>Innings</span><strong id="inningsValue">-</strong></div>
+                <div><span>Score</span><strong id="scoreValue">-</strong></div>
+                <div><span>Over</span><strong id="overBallValue">-</strong></div>
+                <div><span>Progress</span><strong id="progressHeaderValue">-</strong></div>
+                <div><span>Accuracy</span><strong id="accuracyValue">-</strong></div>
+              </div>
+            </header>
 
-        <section id="replayPanel" class="replay" hidden>
-          <section class="card match-header" aria-label="Match header">
-            <h2 id="matchTitle">Replay Workspace</h2>
-            <p id="matchSubline" class="muted">Select a match to begin.</p>
-            <p id="replayTeamNotice" class="muted" hidden></p>
-            <div class="header-grid">
-              <div><span>Teams</span><strong id="teamsValue">-</strong></div>
-              <div><span>Innings</span><strong id="inningsValue">-</strong></div>
-              <div><span>Score</span><strong id="scoreValue">-</strong></div>
-              <div><span>Over/Ball</span><strong id="overBallValue">-</strong></div>
-              <div><span>Progress</span><strong id="progressHeaderValue">-</strong></div>
-              <div><span>Replay Accuracy</span><strong id="accuracyValue">-</strong></div>
+            <div class="workspace-tabs">
+              <button id="tabPredictionBtn" class="tab-btn active" type="button">Prediction</button>
+              <button id="tabBallByBallBtn" class="tab-btn" type="button">Ball-by-Ball</button>
+              <button id="tabEvidenceBtn" class="tab-btn" type="button">Evidence</button>
             </div>
-          </section>
 
-          <section class="workspace-nav card" aria-label="Replay workspace tabs">
-            <button id="tabPredictionBtn" class="tab-btn active" type="button">Prediction</button>
-            <button id="tabBallByBallBtn" class="tab-btn" type="button">Ball-by-Ball</button>
-            <button id="tabEvidenceBtn" class="tab-btn" type="button">Evidence</button>
-          </section>
+            <section id="panelPrediction" class="workspace-panel">
+              <article class="prediction-hero">
+                <h4>Before the Ball</h4>
+                <div class="versus">
+                  <button id="batterValue" class="link-btn" type="button">-</button>
+                  <span>vs</span>
+                  <button id="bowlerValue" class="link-btn" type="button">-</button>
+                </div>
+                <p class="muted"><button id="nonStrikerValue" class="link-btn" type="button">-</button> non-striker</p>
+                <p><strong id="stateScoreValue">-</strong>/<strong id="stateWicketsValue">-</strong> · <strong id="stateBallsValue">-</strong> · <strong id="phaseValue">-</strong></p>
 
-          <section id="panelPrediction" class="workspace-panel">
-            <section class="card state" aria-label="Current match state">
-              <h3>Before the Ball</h3>
-              <div class="state-grid">
-                <div><span>Batter</span><button id="batterValue" class="link-btn" type="button">-</button></div>
-                <div><span>Non-striker</span><button id="nonStrikerValue" class="link-btn" type="button">-</button></div>
-                <div><span>Bowler</span><button id="bowlerValue" class="link-btn" type="button">-</button></div>
-                <div><span>Phase</span><strong id="phaseValue">-</strong></div>
-                <div><span>Score</span><strong id="stateScoreValue">-</strong></div>
-                <div><span>Wickets</span><strong id="stateWicketsValue">-</strong></div>
-                <div><span>Legal balls</span><strong id="stateBallsValue">-</strong></div>
-                <div><span>Remaining</span><strong id="remainingValue">-</strong></div>
-              </div>
+                <h4>MATCHGENOME PREDICTS</h4>
+                <p class="hero-result"><span id="predictedTop">-</span><small id="predictedPct">-</small></p>
+                <div id="probabilityBars" class="probability-bars"></div>
+                <div id="whyBlock" class="explain-block">Generate a prediction to see the evidence narrative.</div>
+                <div id="changeBlock" class="explain-block muted">Prediction change diagnostics will appear after the next ball.</div>
+
+                <div class="control-row">
+                  <button id="predictBtn" class="primary" type="button">Predict Next Ball</button>
+                  <button id="revealBtn" class="accent" type="button" disabled>Reveal the Ball</button>
+                  <button id="restartBtn" type="button">Restart</button>
+                  <button id="nextBtn" type="button" disabled>Next Ball</button>
+                  <button id="previousBtn" type="button" disabled>Previous Revealed</button>
+                </div>
+              </article>
+
+              <article class="reveal-hero">
+                <h4>The Ball Happened</h4>
+                <div id="actualBlock" class="actual-block">Reveal the ball to see actual outcome.</div>
+              </article>
             </section>
 
-            <section class="card prediction" aria-label="MatchGenome prediction">
-              <h3>MatchGenome Predicts</h3>
-              <p class="hero"><span id="predictedTop">-</span> <small id="predictedPct">-</small></p>
-              <div id="probabilityBars" class="probability-bars"></div>
-              <div class="why-block" id="whyBlock">Generate a prediction to see evidence-backed explanation.</div>
-              <div class="control-row">
-                <button id="predictBtn" class="primary">Predict Next Ball</button>
-                <button id="revealBtn" class="accent" disabled>Reveal What Happened</button>
-                <button id="nextBtn" disabled>Next Ball</button>
-                <button id="previousBtn" disabled>Previous Revealed</button>
-                <button id="restartBtn">Restart</button>
-              </div>
-            </section>
-
-            <section class="card actual" aria-label="Actual result">
-              <h3>What Actually Happened</h3>
-              <div id="actualBlock" class="actual-block">Reveal the ball to see actual outcome.</div>
-            </section>
-          </section>
-
-          <section id="panelBallByBall" class="workspace-panel" hidden>
-            <section class="card timeline" aria-label="Replay timeline">
+            <section id="panelBallByBall" class="workspace-panel" hidden>
               <div class="timeline-header">
-                <h3>Ball-by-Ball Timeline</h3>
-                <div id="progressValue" class="progress-text">0/0 revealed</div>
+                <h4>Ball-by-Ball Replay</h4>
+                <p id="progressValue" class="muted">0/0 revealed</p>
               </div>
-              <div class="timeline-summary">
-                <span id="prevBallValue">Previous: -</span>
-                <span id="nextBallValue">Next: -</span>
-              </div>
+              <p id="prevBallValue" class="muted">Previous: -</p>
+              <p id="nextBallValue" class="muted">Next: -</p>
               <div class="progress-bar" aria-hidden="true"><span id="progressFill"></span></div>
               <div id="timelineTrack" class="timeline-track"></div>
               <div class="table-wrap">
-                <table class="mini-table" aria-label="Ball by ball replay rows">
+                <table class="mini-table">
                   <thead>
-                    <tr>
-                      <th>Over</th>
-                      <th>Batter</th>
-                      <th>Bowler</th>
-                      <th>Predicted</th>
-                      <th>Actual</th>
-                      <th>Result</th>
-                    </tr>
+                    <tr><th>Over</th><th>Batter</th><th>Bowler</th><th>Predicted</th><th>Actual</th><th>Result</th></tr>
                   </thead>
                   <tbody id="ballByBallRows">
                     <tr><td colspan="6" class="muted">No deliveries revealed yet.</td></tr>
@@ -173,99 +167,92 @@
                 </table>
               </div>
             </section>
-          </section>
 
-          <section id="panelEvidence" class="workspace-panel" hidden>
-            <section class="card" aria-label="Prediction evidence">
-              <h3>Why MatchGenome Predicted This</h3>
-              <div id="evidenceBlock" class="evidence"></div>
-              <div id="distributionBlock" class="evidence"></div>
-              <details id="technicalEvidenceDetails" class="tech-details">
-                <summary>Technical evidence</summary>
-                <div id="technicalEvidenceBlock" class="evidence muted">Predict a ball to populate technical evidence.</div>
+            <section id="panelEvidence" class="workspace-panel" hidden>
+              <h4>Why MatchGenome predicted this</h4>
+              <div id="evidenceBlock" class="panel-block"></div>
+              <div id="distributionBlock" class="panel-block"></div>
+              <details id="technicalEvidenceDetails">
+                <summary>Query interpretation and technical details</summary>
+                <div id="technicalEvidenceBlock" class="panel-block muted">Predict a ball to populate technical evidence.</div>
               </details>
             </section>
           </section>
         </section>
       </section>
 
-      <section id="playerView" class="view-stack" hidden>
-        <section class="card" aria-label="Player search">
-          <div class="player-panel-header">
-            <h2>Players</h2>
-            <button id="backToReplayBtn" type="button">Return to Time Machine</button>
-          </div>
-          <p class="muted">Search by player name, or click players directly inside Time Machine.</p>
-          <div class="search-row">
-            <label class="sr-only" for="playerSearchInput">Search players</label>
-            <input id="playerSearchInput" type="search" placeholder="Search players (e.g. Head, Kohli, Bumrah)" />
-            <button id="playerSearchBtn" type="button">Search</button>
-          </div>
-          <p id="playerSearchHint" class="muted">Type at least 2 characters to see matching players.</p>
-          <div id="playerSearchResults" class="search-results" role="listbox" aria-label="Player search results"></div>
-        </section>
+      <section id="playerView" class="view" hidden>
+        <section class="player-layout">
+          <aside class="player-search-pane">
+            <div class="title-row">
+              <h2>Player Intelligence</h2>
+              <button id="backToReplayBtn" type="button">Back to Match</button>
+            </div>
+            <p class="muted">Search players or jump from Time Machine and Ask results.</p>
+            <div class="search-row">
+              <input id="playerSearchInput" type="search" placeholder="Search players (Kohli, Dhoni, Bumrah...)" />
+              <button id="playerSearchBtn" type="button">Search</button>
+            </div>
+            <p id="playerSearchHint" class="muted">Type at least 2 characters to see matching players.</p>
+            <div id="playerSearchResults" class="search-results" role="listbox"></div>
+          </aside>
 
-        <section class="card player-panel" aria-label="Player intelligence profile">
-          <div class="player-panel-header">
-            <h3>Player Profile</h3>
-            <button id="closePlayerBtn" type="button">Close</button>
-          </div>
-          <div id="playerPrompt">Use search to open a player workspace, or click a batter/non-striker/bowler from Time Machine.</div>
-          <div id="playerPanel" hidden>
-            <div class="player-hero premium">
-              <img id="playerPhoto" class="avatar avatar-photo" alt="" src="/assets/players/placeholder.svg" hidden />
-              <div id="playerAvatar" class="avatar" aria-hidden="true">?</div>
-              <div class="player-headline">
-                <h4 id="playerName">-</h4>
-                <p id="playerRole" class="muted">-</p>
-                <p id="playerCareerContext" class="muted">-</p>
-                <p id="playerPhotoMeta" class="muted">-</p>
-                <div class="context-links">
-                  <button id="exploreReplayBtn" type="button">Explore in Time Machine</button>
-                  <span id="playerContextText" class="muted">No active replay context.</span>
+          <section class="player-profile-pane">
+            <div id="playerPrompt" class="panel-block">Open a player from search, Ask MatchGenome, or the replay workspace.</div>
+            <div id="playerPanel" hidden>
+              <header class="player-hero">
+                <img id="playerPhoto" class="avatar avatar-photo" alt="" src="/assets/players/placeholder.svg" hidden />
+                <div id="playerAvatar" class="avatar" aria-hidden="true">?</div>
+                <div>
+                  <h3 id="playerName">-</h3>
+                  <p id="playerRole" class="muted">-</p>
+                  <p id="playerCareerContext" class="muted">-</p>
+                  <p id="playerPhotoMeta" class="muted">-</p>
+                  <p id="playerContextText" class="muted">No active replay context.</p>
+                  <div class="row-actions">
+                    <button id="exploreReplayBtn" type="button">Open in Time Machine</button>
+                    <button id="closePlayerBtn" type="button">Close</button>
+                  </div>
                 </div>
-              </div>
+              </header>
+
+              <nav class="workspace-tabs player-tabs">
+                <button id="playerTabOverviewBtn" class="tab-btn active" type="button">Overview</button>
+                <button id="playerTabBattingBtn" class="tab-btn" type="button">Batting</button>
+                <button id="playerTabBowlingBtn" class="tab-btn" type="button">Bowling</button>
+                <button id="playerTabMatchupsBtn" class="tab-btn" type="button">Matchups</button>
+                <button id="playerTabSeasonsBtn" class="tab-btn" type="button">Seasons</button>
+                <button id="playerTabPhasesBtn" class="tab-btn" type="button">Phases</button>
+              </nav>
+
+              <section id="playerPanelOverview" class="player-tab-panel"><div id="playerOverview"></div></section>
+              <section id="playerPanelBatting" class="player-tab-panel" hidden><div id="playerBatting"></div></section>
+              <section id="playerPanelBowling" class="player-tab-panel" hidden><div id="playerBowling"></div></section>
+              <section id="playerPanelMatchups" class="player-tab-panel" hidden><div id="playerMatchups"></div></section>
+              <section id="playerPanelSeasons" class="player-tab-panel" hidden><div id="playerSeasons"></div></section>
+              <section id="playerPanelPhases" class="player-tab-panel" hidden><div id="playerPhases"></div></section>
             </div>
-            <div class="workspace-nav player-tabs" aria-label="Player intelligence tabs">
-              <button id="playerTabOverviewBtn" class="tab-btn active" type="button">Overview</button>
-              <button id="playerTabBattingBtn" class="tab-btn" type="button">Batting</button>
-              <button id="playerTabBowlingBtn" class="tab-btn" type="button">Bowling</button>
-              <button id="playerTabMatchupsBtn" class="tab-btn" type="button">Matchups</button>
-              <button id="playerTabSeasonsBtn" class="tab-btn" type="button">Seasons</button>
-              <button id="playerTabPhasesBtn" class="tab-btn" type="button">Phases</button>
-            </div>
-
-            <section id="playerPanelOverview" class="player-tab-panel">
-              <div id="playerOverview" class="stats-grid"></div>
-            </section>
-
-            <section id="playerPanelBatting" class="player-tab-panel" hidden>
-              <h4 id="battingTitle">Batting Intelligence</h4>
-              <div id="playerBatting"></div>
-            </section>
-
-            <section id="playerPanelBowling" class="player-tab-panel" hidden>
-              <h4 id="bowlingTitle">Bowling Intelligence</h4>
-              <div id="playerBowling"></div>
-            </section>
-
-            <section id="playerPanelMatchups" class="player-tab-panel" hidden>
-              <h4>Matchup Intelligence</h4>
-              <div id="playerMatchups"></div>
-            </section>
-
-            <section id="playerPanelSeasons" class="player-tab-panel" hidden>
-              <h4>Season Trends</h4>
-              <div id="playerSeasons"></div>
-            </section>
-
-            <section id="playerPanelPhases" class="player-tab-panel" hidden>
-              <h4>Phase Comparison</h4>
-              <div id="playerPhases"></div>
-            </section>
-          </div>
+          </section>
         </section>
       </section>
+
+      <section id="methodologyView" class="view" hidden>
+        <section class="hero-card">
+          <h2>Methodology</h2>
+          <p class="muted">Technical details are available for users who want to inspect data contracts and evaluation safeguards.</p>
+          <ul>
+            <li>Delivery truth comes from the IPL CSV loaded into SQLite.</li>
+            <li>Enrichment metadata (teams, matches, assets) is separate and provenance-aware.</li>
+            <li>Prediction is deterministic and built only from pre-ball knowledge.</li>
+            <li>Temporal evaluation and leakage protections are retained.</li>
+            <li>Ask MatchGenome uses validated query plans and read-only SQL execution.</li>
+          </ul>
+        </section>
+      </section>
+
+      <div class="sr-only">Match Discovery</div>
+      <div class="sr-only">Players</div>
+      <div class="sr-only">Reveal the ball to see actual outcome.</div>
     </main>
 
     <script src="/app.js" defer></script>
