@@ -51,6 +51,14 @@ class AskMatchGenomeTests(unittest.TestCase):
             ON CONFLICT(canonical_team_name, season_id, captain, coach, owner, home_venue) DO NOTHING
             """
         )
+        conn.execute(
+            """
+            INSERT INTO team_season_knowledge(
+                canonical_team_name, season_id, captain, coach, owner, source_key, source_url, retrieved_at, verification_status
+            ) VALUES ('Team1', 2021, 'Captain One', 'Coach One', 'Owner One', 'test_fixture', 'https://example.invalid/team1/2021', CURRENT_TIMESTAMP, 'verified')
+            ON CONFLICT(canonical_team_name, season_id, captain, coach, owner, home_venue) DO NOTHING
+            """
+        )
         conn.commit()
         self.conn = conn
         self.engine = AskMatchGenomeEngine(conn)
@@ -115,16 +123,97 @@ class AskMatchGenomeTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["status"], "ok")
         self.assertEqual(payload["results"][0]["result"]["value"], "Captain One")
 
+    def test_current_season_leadership_does_not_fallback_to_old_year(self) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO team_season_knowledge(
+                canonical_team_name, season_id, captain, coach, owner, source_key, source_url, retrieved_at, verification_status
+            ) VALUES
+            ('Team1', 2021, 'Captain Current', 'Coach Current', 'Owner Current', 'test_fixture', 'https://example.invalid/team1/2021b', CURRENT_TIMESTAMP, 'verified')
+            """
+        )
+        self.conn.commit()
+        self.engine = AskMatchGenomeEngine(self.conn)
+
+        current = self.engine.ask("Who is Team1 captain?")
+        historical = self.engine.ask("Who was Team1 captain in 2020?")
+        self.assertEqual(current["results"][0]["result"]["value"], "Captain Current")
+        self.assertEqual(historical["results"][0]["result"]["value"], "Captain One")
+
+    def test_current_season_leadership_missing_returns_unavailable(self) -> None:
+        self.conn.execute("DELETE FROM team_season_knowledge WHERE canonical_team_name = 'Team1' AND season_id = 2021")
+        self.conn.commit()
+        self.engine = AskMatchGenomeEngine(self.conn)
+
+        payload = self.engine.ask("Who is Team1 captain?")
+        self.assertIsNone(payload["results"][0]["result"]["value"])
+        self.assertIn("Verified information is not currently available", payload["results"][0]["result"]["label"])
+
     def test_children_phrase_with_kids_is_supported(self) -> None:
         payload = self.engine.ask("How many kids does PlayerA have?")
         self.assertEqual(payload["results"][0]["status"], "ok")
+
+    def test_provisional_player_fact_is_not_returned_as_verified(self) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO player_knowledge(
+                canonical_player_name, full_name, source_key, source_url, retrieved_at, verification_status
+            ) VALUES ('PlayerProvisional', 'Player Provisional Fullname', 'test_fixture', 'https://example.invalid/provisional', CURRENT_TIMESTAMP, 'provisional')
+            ON CONFLICT(canonical_player_name) DO UPDATE SET full_name=excluded.full_name, verification_status='provisional'
+            """
+        )
+        self.conn.execute("INSERT OR IGNORE INTO players(player_name) VALUES ('PlayerProvisional')")
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO player_identity_alias(alias_name, canonical_player_name, source_key, source_url, retrieved_at, verification_status)
+            VALUES ('player provisional', 'PlayerProvisional', 'test_fixture', NULL, CURRENT_TIMESTAMP, 'provisional')
+            """
+        )
+        self.conn.commit()
+        self.engine = AskMatchGenomeEngine(self.conn)
+        payload = self.engine.ask("What is the full name of Player Provisional?")
+        self.assertIsNone(payload["results"][0]["result"]["value"])
+        self.assertIn("Verified information is not currently available", payload["results"][0]["result"]["label"])
+
+    def test_final_winner_variants_resolve(self) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO enrichment_source(
+                source_key, source_name, source_url, source_type, source_version, status, last_checked_at
+            ) VALUES ('test_fixture', 'Test Fixture', 'https://example.invalid', 'unit', 'v1', 'ready', CURRENT_TIMESTAMP)
+            """
+        )
+        self.conn.execute(
+            """
+            INSERT INTO match_metadata(
+                match_id, season_id, match_number, match_date, venue, city,
+                team_a_display, team_b_display, winner, match_type,
+                source_key, source_reference, fetched_at, verification_status, enrichment_version
+            ) VALUES (24240074, 2024, NULL, '2024-05-26', 'MA Chidambaram Stadium', 'Chennai',
+                      'Sunrisers Hyderabad', 'Kolkata Knight Riders', 'Kolkata Knight Riders', 'Final',
+                      'test_fixture', 'unit', CURRENT_TIMESTAMP, 'verified', 'v1')
+            """
+        )
+        self.conn.commit()
+        self.engine = AskMatchGenomeEngine(self.conn)
+        for question in [
+            "What was the winner of the IPL 2024 final?",
+            "Who won the 2024 IPL final?",
+            "IPL 2024 final winner",
+            "Who won IPL 2024?",
+            "Who were the 2024 champions?",
+        ]:
+            payload = self.engine.ask(question)
+            self.assertEqual(payload["results"][0]["status"], "ok")
+            value = payload["results"][0]["result"]["value"]
+            self.assertEqual(value["winner"], "Kolkata Knight Riders")
 
     def test_spelling_variant_resolves_player(self) -> None:
         self.conn.execute(
             """
             INSERT INTO player_knowledge(
                 canonical_player_name, full_name, source_key, source_url, retrieved_at, verification_status
-            ) VALUES ('V Suryavanshi', 'Vaibhav Suryavanshi', 'test_fixture', 'https://example.invalid/vaibhav', CURRENT_TIMESTAMP, 'provisional')
+            ) VALUES ('V Suryavanshi', 'Vaibhav Suryavanshi', 'test_fixture', 'https://example.invalid/vaibhav', CURRENT_TIMESTAMP, 'verified')
             ON CONFLICT(canonical_player_name) DO UPDATE SET full_name=excluded.full_name
             """
         )
@@ -132,7 +221,7 @@ class AskMatchGenomeTests(unittest.TestCase):
         self.conn.execute(
             """
             INSERT OR IGNORE INTO player_identity_alias(alias_name, canonical_player_name, source_key, source_url, retrieved_at, verification_status)
-            VALUES ('v suryavanshi', 'V Suryavanshi', 'test_fixture', NULL, CURRENT_TIMESTAMP, 'provisional')
+            VALUES ('v suryavanshi', 'V Suryavanshi', 'test_fixture', NULL, CURRENT_TIMESTAMP, 'verified')
             """
         )
         self.conn.commit()
@@ -162,6 +251,41 @@ class AskMatchGenomeTests(unittest.TestCase):
         self.assertEqual(fx["results"][0]["status"], "ok")
         self.assertEqual(rs["results"][0]["status"], "ok")
         self.assertEqual(pt["results"][0]["status"], "ok")
+
+    def test_untrusted_season_refuses_statistical_answer(self) -> None:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO season_trust_gate(
+                season_id, coverage_status, reconciliation_status, status, reason,
+                source_key, source_url, retrieved_at, verification_status
+            ) VALUES (2020, 'FAIL', 'FAIL', 'FAIL', 'coverage_incomplete',
+                      'test_fixture', 'https://example.invalid', CURRENT_TIMESTAMP, 'verified')
+            """
+        )
+        self.conn.commit()
+        self.engine = AskMatchGenomeEngine(self.conn)
+
+        payload = self.engine.ask("Who scored the most runs in IPL 2020?")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertIsNone(payload["results"][0]["result"]["value"])
+        self.assertIn("Verified information is not currently available", payload["results"][0]["result"]["label"])
+
+    def test_trusted_season_allows_statistical_answer(self) -> None:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO season_trust_gate(
+                season_id, coverage_status, reconciliation_status, status, reason,
+                source_key, source_url, retrieved_at, verification_status
+            ) VALUES (2020, 'PASS', 'PASS', 'PASS', 'coverage_complete_and_reconciled',
+                      'test_fixture', 'https://example.invalid', CURRENT_TIMESTAMP, 'verified')
+            """
+        )
+        self.conn.commit()
+        self.engine = AskMatchGenomeEngine(self.conn)
+
+        payload = self.engine.ask("Who scored the most runs in IPL 2020?")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertIsInstance(payload["results"][0]["result"]["value"], list)
 
     def test_prediction_guidance_questions_are_supported(self) -> None:
         payload = self.engine.ask("What is likely to happen on the next ball?")

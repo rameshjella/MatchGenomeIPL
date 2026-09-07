@@ -47,6 +47,7 @@ class EnrichmentTests(unittest.TestCase):
     def _write_zip_fixture(self, path: Path) -> None:
         m1 = {
             "info": {
+                "season": "2020/21",
                 "event": {"name": "Indian Premier League", "match_number": 1},
                 "dates": ["2020-09-19"],
                 "match_type": "T20",
@@ -61,6 +62,7 @@ class EnrichmentTests(unittest.TestCase):
         }
         m2 = {
             "info": {
+                "season": "2021",
                 "event": {"name": "Indian Premier League", "match_number": 2},
                 "dates": ["2021-04-10"],
                 "match_type": "T20",
@@ -104,6 +106,13 @@ class EnrichmentTests(unittest.TestCase):
         self.assertIsNotNone(team_row)
         self.assertEqual(team_row["current_canonical_name"], "Punjab Kings")
 
+        coverage_rows = self.conn.execute("SELECT COUNT(*) FROM season_source_coverage").fetchone()[0]
+        reconciliation_rows = self.conn.execute("SELECT COUNT(*) FROM season_metric_reconciliation").fetchone()[0]
+        trust_rows = self.conn.execute("SELECT COUNT(*) FROM season_trust_gate").fetchone()[0]
+        self.assertGreaterEqual(coverage_rows, 1)
+        self.assertGreaterEqual(reconciliation_rows, 1)
+        self.assertGreaterEqual(trust_rows, 1)
+
     def test_reference_knowledge_enrichment_populates_player_and_team_season(self) -> None:
         stats = run_reference_knowledge_enrichment(self.conn)
         self.assertGreaterEqual(stats["players_upserted"], 4)
@@ -115,7 +124,7 @@ class EnrichmentTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(dhoni)
         self.assertEqual(dhoni["full_name"], "Mahendra Singh Dhoni")
-        self.assertEqual(dhoni["verification_status"], "provisional")
+        self.assertEqual(dhoni["verification_status"], "verified")
         self.assertEqual(dhoni["source_key"], "matchgenome_reference_knowledge_v1")
 
         team_season = self.conn.execute(

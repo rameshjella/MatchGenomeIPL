@@ -34,6 +34,86 @@ def _verification_rank(status: str | None) -> int:
     return 0
 
 
+def _is_verified(status: str | None) -> bool:
+    return (status or "").strip().lower() == "verified"
+
+
+def season_coverage_status(conn: sqlite3.Connection, season: int) -> dict[str, Any] | None:
+    row = conn.execute(
+        """
+        SELECT expected_matches, local_matches, missing_matches, status,
+               verification_status, source_key, source_url, retrieved_at
+        FROM season_source_coverage
+        WHERE season_id = ? AND source_key = 'cricsheet_ipl_json'
+        LIMIT 1
+        """,
+        (season,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "expected_matches": int(row["expected_matches"] or 0),
+        "local_matches": int(row["local_matches"] or 0),
+        "missing_matches": int(row["missing_matches"] or 0),
+        "status": str(row["status"] or "unknown"),
+        "verification_status": str(row["verification_status"] or "unknown"),
+        "source": str(row["source_key"] or ""),
+        "source_url": row["source_url"],
+        "retrieved_at": row["retrieved_at"],
+    }
+
+
+def season_trust_status(conn: sqlite3.Connection, season: int) -> dict[str, Any] | None:
+    row = conn.execute(
+        """
+        SELECT season_id, coverage_status, reconciliation_status, status, reason,
+               source_key, source_url, retrieved_at, verification_status
+        FROM season_trust_gate
+        WHERE season_id = ?
+        LIMIT 1
+        """,
+        (season,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "season_id": int(row["season_id"]),
+        "coverage_status": str(row["coverage_status"]),
+        "reconciliation_status": str(row["reconciliation_status"]),
+        "status": str(row["status"]),
+        "reason": str(row["reason"]),
+        "source": str(row["source_key"]),
+        "source_url": row["source_url"],
+        "retrieved_at": row["retrieved_at"],
+        "verification_status": str(row["verification_status"]),
+    }
+
+
+def season_has_verified_complete_coverage(conn: sqlite3.Connection, season: int) -> tuple[bool, dict[str, Any]]:
+    trust = season_trust_status(conn, season)
+    if trust is not None:
+        trusted = trust["status"] in {"PASS", "PASS_WITH_DEFINITION_NOTE"}
+        return trusted, {
+            "reason": "ok" if trusted else str(trust.get("reason") or "season_not_trusted"),
+            "season_id": season,
+            "trust": trust,
+            "coverage": season_coverage_status(conn, season),
+        }
+
+    coverage = season_coverage_status(conn, season)
+    if coverage is None:
+        return False, {
+            "reason": "coverage_not_recorded",
+            "season_id": season,
+        }
+    is_complete = coverage["status"] == "complete" and _is_verified(coverage["verification_status"])
+    return is_complete, {
+        "reason": "ok" if is_complete else "coverage_incomplete",
+        "season_id": season,
+        "coverage": coverage,
+    }
+
+
 def _player_activity_map(conn: sqlite3.Connection) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in conn.execute("SELECT batter AS player, COUNT(*) AS c FROM deliveries GROUP BY batter").fetchall():
@@ -337,6 +417,21 @@ def lookup_player_fact(conn: sqlite3.Connection, player_query: str, attribute: s
     }.get(attribute, attribute)
 
     value = row[column] if column in row.keys() else None
+    if not _is_verified(str(row["verification_status"])):
+        return KnowledgeAnswer(
+            value=None,
+            label="Verified information is not currently available.",
+            evidence={
+                "interpretation": "player knowledge lookup",
+                "player": canonical,
+                "attribute": attribute,
+                "source": row["source_key"],
+                "source_url": row["source_url"],
+                "verification_status": row["verification_status"],
+                "retrieved_at": row["retrieved_at"],
+                "reason": "only_provisional_or_unverified_data_available",
+            },
+        )
     if value is None or str(value).strip() == "":
         return KnowledgeAnswer(
             value=None,
@@ -473,6 +568,8 @@ def season_stats_overview(conn: sqlite3.Connection, season: int) -> dict[str, An
         """,
         (season,),
     ).fetchone()
+    authoritative_coverage = season_coverage_status(conn, season)
+    trust_status = season_trust_status(conn, season)
 
     return {
         "season_id": season,
@@ -490,6 +587,8 @@ def season_stats_overview(conn: sqlite3.Connection, season: int) -> dict[str, An
             "deliveries_matches": matches,
             "metadata_matches": int((coverage["metadata_matches"] if coverage else 0) or 0),
             "completed_matches": int((coverage["completed_matches"] if coverage else 0) or 0),
+            "authoritative": authoritative_coverage,
+            "trust_gate": trust_status,
         },
         "definitions": {
             "dot_balls": "legal deliveries where total_runs == 0",
@@ -728,12 +827,14 @@ def team_season_info(conn: sqlite3.Connection, team: str, season: int) -> dict[s
                source_key, source_url, retrieved_at, verification_status
         FROM team_season_knowledge
         WHERE canonical_team_name = ? AND season_id = ?
-        ORDER BY retrieved_at DESC
+        ORDER BY retrieved_at DESC, team_season_id DESC
         LIMIT 1
         """,
         (team, season),
     ).fetchone()
     if row is None:
+        return None
+    if not _is_verified(str(row["verification_status"])):
         return None
     return {
         "team": row["canonical_team_name"],

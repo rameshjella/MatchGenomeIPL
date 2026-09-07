@@ -13,7 +13,7 @@ if str(SRC) not in sys.path:
 from fixture_data import SAMPLE_CSV
 from matchgenomeipl.database import connect_db, initialize_schema
 from matchgenomeipl.ingestion import ingest_csv_to_sqlite
-from matchgenomeipl.ipl_knowledge import points_table, season_leaderboards, season_stats_overview
+from matchgenomeipl.ipl_knowledge import points_table, season_leaderboards, season_stats_overview, season_trust_status
 
 
 class IplKnowledgeTests(unittest.TestCase):
@@ -83,6 +83,26 @@ class IplKnowledgeTests(unittest.TestCase):
         # Canonical T20 NRR treatment uses full 20 overs (120 balls) for all-out innings.
         self.assertAlmostEqual(float(team_a["net_run_rate"]), -0.05, places=3)
         self.assertAlmostEqual(float(team_b["net_run_rate"]), 0.05, places=3)
+
+    def test_season_trust_gate_status_lookup(self) -> None:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO season_trust_gate(
+                season_id, coverage_status, reconciliation_status, status, reason,
+                source_key, source_url, retrieved_at, verification_status
+            ) VALUES
+            (2020, 'PASS', 'PASS', 'PASS', 'coverage_complete_and_reconciled', 'test_fixture', 'https://example.invalid', CURRENT_TIMESTAMP, 'verified'),
+            (2021, 'FAIL', 'FAIL', 'FAIL', 'coverage_incomplete', 'test_fixture', 'https://example.invalid', CURRENT_TIMESTAMP, 'verified')
+            """
+        )
+        self.conn.commit()
+
+        trusted = season_trust_status(self.conn, 2020)
+        untrusted = season_trust_status(self.conn, 2021)
+        self.assertIsNotNone(trusted)
+        self.assertIsNotNone(untrusted)
+        self.assertEqual(trusted["status"], "PASS")
+        self.assertEqual(untrusted["status"], "FAIL")
 
 
 if __name__ == "__main__":

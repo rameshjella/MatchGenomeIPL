@@ -17,6 +17,7 @@ from .ipl_knowledge import (
     list_results,
     lookup_player_fact,
     points_table,
+    season_has_verified_complete_coverage,
     top_performers,
 )
 from .runtime_logging import log_sql
@@ -386,6 +387,16 @@ class SemanticResolver:
         lowered = self._normalize_text(text)
         tokens = lowered.split()
 
+        exact = self.player_aliases.get(lowered, [])
+        if len(exact) == 1:
+            return EntityResolution(exact[0], exact, False)
+        for width in range(min(5, len(tokens)), 1, -1):
+            for i in range(len(tokens) - width + 1):
+                alias = " ".join(tokens[i : i + width])
+                matched = self.player_aliases.get(alias, [])
+                if len(matched) == 1:
+                    return EntityResolution(matched[0], matched, False)
+
         # Surname-only references with many collisions should not auto-resolve.
         for token in tokens:
             token_candidates = self.player_aliases.get(token, [])
@@ -653,6 +664,19 @@ class RuleBasedPlanProvider:
             )
 
         if season is not None and "final" in lowered and any(token in lowered for token in ("happened", "result", "winner")):
+            entities["match_type"] = "final"
+            return QueryPlan(
+                question=raw,
+                operation="lookup",
+                entity="match_result_summary",
+                entities=entities,
+                metric="result",
+                metrics=["result"],
+                filters=dict(entities),
+                limit=1,
+            )
+
+        if season is not None and any(token in lowered for token in ("won", "winner", "champion", "champions")):
             entities["match_type"] = "final"
             return QueryPlan(
                 question=raw,
@@ -1232,6 +1256,36 @@ class QueryExecutor:
             return " AND d.over_number >= 15"
         return ""
 
+    def _require_complete_season_coverage(self, season: int) -> dict[str, Any] | None:
+        ok, details = season_has_verified_complete_coverage(self.conn, season)
+        if details.get("reason") == "coverage_not_recorded":
+            return None
+        if ok:
+            return None
+        return {
+            "value": None,
+            "label": "Verified information is not currently available.",
+            "evidence": {
+                "interpretation": "season coverage trust gate",
+                "season": season,
+                "reason": details.get("reason", "coverage_incomplete"),
+                "coverage": details.get("coverage"),
+                "trust": details.get("trust"),
+            },
+        }
+
+    def _season_verified_evidence(self, season: int | None) -> dict[str, Any]:
+        if not isinstance(season, int):
+            return {}
+        ok, details = season_has_verified_complete_coverage(self.conn, season)
+        if not ok:
+            return {}
+        return {
+            "verification_status": "verified",
+            "coverage": details.get("coverage"),
+            "trust": details.get("trust"),
+        }
+
     def _build_batting_metrics_expr(self) -> dict[str, str]:
         return {
             "runs": "COALESCE(SUM(d.batter_runs), 0)",
@@ -1270,6 +1324,60 @@ class QueryExecutor:
         season = plan.entities.get("season")
         phase = plan.entities.get("phase")
         season_range = (plan.entities.get("season_start"), plan.entities.get("season_end"))
+        requested_metrics = plan.metrics or ([plan.metric] if plan.metric else ["runs"])
+        bowling_metrics = {"wickets", "runs_conceded", "legal_balls", "economy", "bowling_strike_rate", "dot_balls", "dot_ball_pct"}
+
+        if any(metric in bowling_metrics for metric in requested_metrics):
+            sql = (
+                "SELECT "
+                "COALESCE(SUM(CASE WHEN d.is_wicket = 1 AND LOWER(COALESCE(d.wicket_kind, '')) NOT IN ('run out','retired hurt','retired out','obstructing the field') THEN 1 ELSE 0 END), 0) AS wickets, "
+                "COALESCE(SUM(d.total_runs - d.bye_runs - d.leg_bye_runs), 0) AS runs_conceded, "
+                "COALESCE(SUM(d.legal_ball), 0) AS legal_balls, "
+                "COALESCE(SUM(CASE WHEN d.total_runs = 0 THEN 1 ELSE 0 END), 0) AS dot_balls "
+                "FROM deliveries d WHERE d.bowler = ?"
+            )
+            params: list[Any] = [player]
+            if isinstance(season, int):
+                blocked = self._require_complete_season_coverage(season)
+                if blocked is not None:
+                    return blocked
+                sql += " AND d.season_id = ?"
+                params.append(season)
+            elif isinstance(season_range[0], int) and isinstance(season_range[1], int):
+                sql += " AND d.season_id BETWEEN ? AND ?"
+                params.extend([season_range[0], season_range[1]])
+            sql += self._phase_filter(str(phase) if isinstance(phase, str) else None)
+
+            row = self._run(sql, tuple(params))[0]
+            runs_conceded = int(row["runs_conceded"])
+            legal_balls = int(row["legal_balls"])
+            wickets = int(row["wickets"])
+            dot_balls = int(row["dot_balls"])
+
+            metric_values: dict[str, float | int] = {
+                "wickets": wickets,
+                "runs_conceded": runs_conceded,
+                "legal_balls": legal_balls,
+                "dot_balls": dot_balls,
+                "economy": round(runs_conceded / (legal_balls / 6.0), 2) if legal_balls else 0.0,
+                "bowling_strike_rate": round(legal_balls / wickets, 2) if wickets else 0.0,
+                "dot_ball_pct": round(dot_balls * 100.0 / legal_balls, 2) if legal_balls else 0.0,
+            }
+            scalar = metric_values[requested_metrics[0]] if len(requested_metrics) == 1 else {m: metric_values[m] for m in requested_metrics}
+            return {
+                "value": scalar,
+                "label": f"{player} {requested_metrics[0].replace('_', ' ')}",
+                "evidence": {
+                    "interpretation": "player bowling aggregate",
+                    "resolved_entities": {"player": player},
+                    "filters": plan.entities,
+                    "metric": requested_metrics,
+                    "source_tables": ["deliveries"],
+                    "sample_size": legal_balls,
+                    "calculation": "parameterized SQL aggregate over bowler deliveries",
+                    **self._season_verified_evidence(season),
+                },
+            }
 
         metric_aliases = self._build_batting_metrics_expr()
         sql = (
@@ -1280,6 +1388,9 @@ class QueryExecutor:
         params: list[Any] = [player]
 
         if isinstance(season, int):
+            blocked = self._require_complete_season_coverage(season)
+            if blocked is not None:
+                return blocked
             sql += " AND d.season_id = ?"
             params.append(season)
         elif isinstance(season_range[0], int) and isinstance(season_range[1], int):
@@ -1291,7 +1402,6 @@ class QueryExecutor:
         row = self._run(sql, tuple(params))[0]
         base = {k: int(row[k]) for k in metric_aliases}
 
-        requested_metrics = plan.metrics or ([plan.metric] if plan.metric else ["runs"])
         values = {m: self._batting_metric_value(m, base) for m in requested_metrics}
         scalar = values[requested_metrics[0]] if len(requested_metrics) == 1 else values
 
@@ -1315,6 +1425,7 @@ class QueryExecutor:
                 "season_scope": scope_parts,
                 "sample_size": base.get("balls", 0),
                 "calculation": "parameterized SQL aggregate over deliveries",
+                **self._season_verified_evidence(season),
             },
         }
 
@@ -1322,6 +1433,10 @@ class QueryExecutor:
         bowler = str(plan.entities.get("bowler") or plan.entities.get("player"))
         team = str(plan.entities["team"])
         season = plan.entities.get("season")
+        if isinstance(season, int):
+            blocked = self._require_complete_season_coverage(season)
+            if blocked is not None:
+                return blocked
 
         sql = (
             "SELECT "
@@ -1377,6 +1492,10 @@ class QueryExecutor:
         limit = int(plan.limit or 10)
         phase = plan.entities.get("phase")
         season = plan.entities.get("season")
+        if isinstance(season, int):
+            blocked = self._require_complete_season_coverage(season)
+            if blocked is not None:
+                return blocked
 
         if plan.entity == "batting":
             if plan.group_by == ["season"] and "player" in plan.entities:
@@ -1467,6 +1586,7 @@ class QueryExecutor:
                     "source_tables": ["deliveries"],
                     "sample_size": sum(int(r["balls"]) for r in rows),
                     "calculation": "group by batter with bounded limit",
+                    **self._season_verified_evidence(season if isinstance(season, int) else None),
                 },
             }
 
@@ -1525,6 +1645,7 @@ class QueryExecutor:
                 "source_tables": ["deliveries", "match_team_map"],
                 "sample_size": sum(int(r["legal_balls"]) for r in rows),
                 "calculation": "group by bowler with bounded limit",
+                **self._season_verified_evidence(season if isinstance(season, int) else None),
             },
         }
 
@@ -1691,28 +1812,17 @@ class QueryExecutor:
         season = plan.entities.get("season")
         if not team:
             raise ValueError("team is required")
-        if isinstance(season, int):
-            row = self._run(
-                """
-                SELECT season_id, captain, coach, owner, home_venue, source_key, source_url, retrieved_at, verification_status
-                FROM team_season_knowledge
-                WHERE canonical_team_name = ? AND season_id = ?
-                ORDER BY retrieved_at DESC
-                LIMIT 1
-                """,
-                (team, season),
-            )
-        else:
-            row = self._run(
-                """
-                SELECT season_id, captain, coach, owner, home_venue, source_key, source_url, retrieved_at, verification_status
-                FROM team_season_knowledge
-                WHERE canonical_team_name = ?
-                ORDER BY season_id DESC, retrieved_at DESC
-                LIMIT 1
-                """,
-                (team,),
-            )
+        resolved_season = int(season) if isinstance(season, int) else int(self._run("SELECT MAX(season_id) AS season_id FROM deliveries")[0]["season_id"])
+        row = self._run(
+            """
+            SELECT season_id, captain, coach, owner, home_venue, source_key, source_url, retrieved_at, verification_status
+            FROM team_season_knowledge
+            WHERE canonical_team_name = ? AND season_id = ?
+            ORDER BY retrieved_at DESC, team_season_id DESC
+            LIMIT 1
+            """,
+            (team, resolved_season),
+        )
         if not row:
             return {
                 "value": None,
@@ -1720,16 +1830,18 @@ class QueryExecutor:
                 "evidence": {
                     "interpretation": "team season knowledge lookup",
                     "team": team,
-                    "season": season,
+                    "season": resolved_season,
                     "source_tables": ["team_season_knowledge"],
+                    "reason": "missing_team_season_record",
                 },
             }
         item = row[0]
         attribute = str(plan.metric or "captain")
-        resolved_season = int(item["season_id"])
         value = item[attribute] if attribute in item.keys() else None
-        if value is None or str(value).strip() == "":
+        verification_status = str(item["verification_status"] or "").strip().lower()
+        if verification_status != "verified" or value is None or str(value).strip() == "":
             label = "Verified information is not currently available."
+            value = None
         else:
             label = f"{team} {attribute} in {resolved_season}"
         return {
@@ -1744,6 +1856,7 @@ class QueryExecutor:
                 "source_url": item["source_url"],
                 "retrieved_at": item["retrieved_at"],
                 "verification_status": item["verification_status"],
+                "reason": "ok" if value is not None else "only_provisional_or_unverified_data_available",
             },
         }
 
@@ -1773,13 +1886,26 @@ class QueryExecutor:
                 },
             }
         row = rows[0]
+        winner = row["winner"]
+        if winner is None or str(winner).strip() == "":
+            return {
+                "value": None,
+                "label": "Verified information is not currently available.",
+                "evidence": {
+                    "interpretation": "match result summary lookup",
+                    "season": season,
+                    "match_type": match_type or None,
+                    "source_tables": ["match_metadata"],
+                    "reason": "winner_missing",
+                },
+            }
         return {
             "value": {
                 "match_id": int(row["match_id"]),
                 "match_number": row["match_number"],
                 "date": row["match_date"],
                 "teams": [row["team_a_display"], row["team_b_display"]],
-                "winner": row["winner"],
+                "winner": winner,
                 "margin": f"{row['result_margin']} {row['result_type']}" if row["result_margin"] else None,
                 "venue": row["venue"],
                 "city": row["city"],
@@ -1829,6 +1955,9 @@ class QueryExecutor:
         season = plan.entities.get("season")
         if not isinstance(season, int):
             raise ValueError("season is required")
+        blocked = self._require_complete_season_coverage(season)
+        if blocked is not None:
+            return blocked
         table = points_table(self.conn, season)
         return {
             "value": table,
@@ -1844,6 +1973,10 @@ class QueryExecutor:
     def _top_performers(self, plan: QueryPlan) -> dict[str, Any]:
         season = plan.entities.get("season") if isinstance(plan.entities.get("season"), int) else None
         limit = int(plan.limit or 5)
+        if isinstance(season, int):
+            blocked = self._require_complete_season_coverage(season)
+            if blocked is not None:
+                return blocked
         top = top_performers(self.conn, season=season, limit=limit)
         return {
             "value": top,

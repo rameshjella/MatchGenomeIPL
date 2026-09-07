@@ -317,6 +317,51 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (canonical_team_name) REFERENCES team_knowledge(canonical_team_name)
         );
 
+        CREATE TABLE IF NOT EXISTS season_source_coverage (
+            coverage_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            season_id INTEGER NOT NULL,
+            source_key TEXT NOT NULL,
+            expected_matches INTEGER NOT NULL,
+            local_matches INTEGER NOT NULL,
+            missing_matches INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            source_url TEXT,
+            retrieved_at TEXT NOT NULL,
+            notes TEXT,
+            UNIQUE(season_id, source_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS season_metric_reconciliation (
+            reconciliation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            season_id INTEGER NOT NULL,
+            metric_name TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            local_value REAL,
+            reference_value REAL,
+            delta_value REAL,
+            relative_delta REAL,
+            status TEXT NOT NULL,
+            root_cause TEXT,
+            definition_notes TEXT,
+            source_url TEXT,
+            retrieved_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            UNIQUE(season_id, metric_name, source_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS season_trust_gate (
+            season_id INTEGER PRIMARY KEY,
+            coverage_status TEXT NOT NULL,
+            reconciliation_status TEXT NOT NULL,
+            status TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            source_url TEXT,
+            retrieved_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS match_highlight_reference (
             highlight_id INTEGER PRIMARY KEY AUTOINCREMENT,
             match_id INTEGER NOT NULL,
@@ -515,6 +560,12 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_team_season_knowledge_team_season
             ON team_season_knowledge(canonical_team_name, season_id);
+
+        CREATE INDEX IF NOT EXISTS idx_season_source_coverage_lookup
+            ON season_source_coverage(season_id, source_key);
+
+        CREATE INDEX IF NOT EXISTS idx_season_metric_reconciliation_lookup
+            ON season_metric_reconciliation(season_id, source_key, metric_name);
 
         CREATE INDEX IF NOT EXISTS idx_match_highlight_reference_match
             ON match_highlight_reference(match_id);
