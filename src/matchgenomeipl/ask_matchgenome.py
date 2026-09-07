@@ -10,6 +10,14 @@ import time
 from typing import Any, Protocol
 from urllib.request import Request, urlopen
 
+from .ipl_knowledge import (
+    ensure_knowledge_bootstrap,
+    list_fixtures,
+    list_results,
+    lookup_player_fact,
+    points_table,
+    top_performers,
+)
 from .runtime_logging import log_sql
 
 READONLY_BLOCKLIST = re.compile(
@@ -26,6 +34,12 @@ ALLOWED_OPERATIONS = {
     "trend",
     "distribution",
     "clarify",
+    "knowledge_lookup",
+    "fixtures",
+    "results",
+    "points_table",
+    "team_season_info",
+    "top_performers",
 }
 
 
@@ -175,6 +189,14 @@ class SemanticResolver:
 
     def _build_team_aliases(self) -> dict[str, str]:
         aliases: dict[str, str] = {}
+        raw_rows = self.conn.execute(
+            "SELECT DISTINCT team_batting AS team_name FROM deliveries UNION SELECT DISTINCT team_bowling AS team_name FROM deliveries"
+        ).fetchall()
+        for row in raw_rows:
+            team = str(row["team_name"])
+            key = self._normalize_text(team)
+            aliases[key] = team
+
         rows = self.conn.execute(
             "SELECT DISTINCT historical_display_name FROM match_team_map WHERE historical_display_name IS NOT NULL"
         ).fetchall()
@@ -475,6 +497,100 @@ class RuleBasedPlanProvider:
         has_player_context = "player" in entities or "players" in entities
         metrics = semantic.resolve_metrics(lowered, has_player_context=has_player_context)
         primary_metric = metrics[0] if metrics else None
+
+        # Player knowledge domain (bio-data and identity attributes).
+        bio_attr = None
+        if "full name" in lowered:
+            bio_attr = "full_name"
+        elif "born" in lowered or "date of birth" in lowered:
+            bio_attr = "date_of_birth"
+        elif "wife" in lowered or "spouse" in lowered:
+            bio_attr = "spouse_name"
+        elif "children" in lowered:
+            bio_attr = "children_count"
+        elif "bowling style" in lowered:
+            bio_attr = "bowling_style"
+        elif "batting style" in lowered:
+            bio_attr = "batting_style"
+        elif "role" in lowered:
+            bio_attr = "role"
+        elif "nationality" in lowered:
+            bio_attr = "nationality"
+
+        if bio_attr is not None:
+            if "player" not in entities:
+                return None
+            return QueryPlan(
+                question=raw,
+                operation="knowledge_lookup",
+                entity="player_knowledge",
+                entities=entities,
+                metric=bio_attr,
+                metrics=[bio_attr],
+                filters=dict(entities),
+            )
+
+        if "captain" in lowered or "coach" in lowered or "owner" in lowered:
+            if "team" not in entities:
+                return None
+            if season is None:
+                return QueryPlan(
+                    question=raw,
+                    operation="clarify",
+                    entity="season",
+                    entities={"reason": "season_required_for_team_leadership", "candidates": []},
+                )
+            leadership_metric = "captain" if "captain" in lowered else "coach" if "coach" in lowered else "owner"
+            return QueryPlan(
+                question=raw,
+                operation="team_season_info",
+                entity="team_season",
+                entities=entities,
+                metric=leadership_metric,
+                metrics=[leadership_metric],
+                filters=dict(entities),
+            )
+
+        if "fixture" in lowered or "fixtures" in lowered:
+            return QueryPlan(
+                question=raw,
+                operation="fixtures",
+                entity="fixtures",
+                entities=entities,
+                filters=dict(entities),
+                limit=semantic.extract_limit(lowered, default=10),
+            )
+
+        if "result" in lowered or "results" in lowered:
+            return QueryPlan(
+                question=raw,
+                operation="results",
+                entity="results",
+                entities=entities,
+                filters=dict(entities),
+                limit=semantic.extract_limit(lowered, default=10),
+            )
+
+        if "points table" in lowered or "team table" in lowered or "standings" in lowered:
+            if season is None:
+                return None
+            return QueryPlan(
+                question=raw,
+                operation="points_table",
+                entity="points_table",
+                entities=entities,
+                filters=dict(entities),
+            )
+
+        if "top performers" in lowered:
+            return QueryPlan(
+                question=raw,
+                operation="top_performers",
+                entity="top_performers",
+                entities=entities,
+                filters=dict(entities),
+                limit=semantic.extract_limit(lowered, default=5),
+            )
 
         if "player of the match" in lowered or "man of the match" in lowered:
             if "final" in lowered:
@@ -786,6 +902,9 @@ class QueryPlanValidator:
             raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
 
         if plan.operation == "clarify":
+            return
+
+        if plan.operation in {"knowledge_lookup", "fixtures", "results", "points_table", "team_season_info", "top_performers"}:
             return
 
         metric_names = set(self.semantic.metric_registry.keys())
@@ -1396,6 +1515,124 @@ class QueryExecutor:
             },
         }
 
+    def _knowledge_lookup(self, plan: QueryPlan) -> dict[str, Any]:
+        player = str(plan.entities.get("player", "")).strip()
+        if not player:
+            raise ValueError("player is required")
+        attribute = str(plan.metric or "full_name")
+        answer = lookup_player_fact(self.conn, player, attribute)
+        return {"value": answer.value, "label": answer.label, "evidence": answer.evidence}
+
+    def _team_season_info(self, plan: QueryPlan) -> dict[str, Any]:
+        team = str(plan.entities.get("team", "")).strip()
+        season = plan.entities.get("season")
+        if not team or not isinstance(season, int):
+            raise ValueError("team and season are required")
+        row = self._run(
+            """
+            SELECT captain, coach, owner, home_venue, source_key, source_url, retrieved_at, verification_status
+            FROM team_season_knowledge
+            WHERE canonical_team_name = ? AND season_id = ?
+            ORDER BY retrieved_at DESC
+            LIMIT 1
+            """,
+            (team, season),
+        )
+        if not row:
+            return {
+                "value": None,
+                "label": "MatchGenome does not currently have verified information for that attribute.",
+                "evidence": {
+                    "interpretation": "team season knowledge lookup",
+                    "team": team,
+                    "season": season,
+                    "source_tables": ["team_season_knowledge"],
+                },
+            }
+        item = row[0]
+        attribute = str(plan.metric or "captain")
+        value = item[attribute] if attribute in item.keys() else None
+        if value is None or str(value).strip() == "":
+            label = "MatchGenome does not currently have verified information for that attribute."
+        else:
+            label = f"{team} {attribute} in {season}"
+        return {
+            "value": value,
+            "label": label,
+            "evidence": {
+                "interpretation": "team season knowledge lookup",
+                "team": team,
+                "season": season,
+                "attribute": attribute,
+                "source": item["source_key"],
+                "source_url": item["source_url"],
+                "retrieved_at": item["retrieved_at"],
+                "verification_status": item["verification_status"],
+            },
+        }
+
+    def _fixtures(self, plan: QueryPlan) -> dict[str, Any]:
+        season = plan.entities.get("season") if isinstance(plan.entities.get("season"), int) else None
+        team = str(plan.entities.get("team")) if plan.entities.get("team") else None
+        fixtures = list_fixtures(self.conn, season=season, team=team, status=None)
+        limited = fixtures[: int(plan.limit or 10)]
+        return {
+            "value": limited,
+            "label": f"Fixtures ({len(limited)} shown)",
+            "evidence": {
+                "interpretation": "fixture listing",
+                "filters": {"season": season, "team": team},
+                "source_tables": ["match_metadata"],
+                "sample_size": len(fixtures),
+            },
+        }
+
+    def _results(self, plan: QueryPlan) -> dict[str, Any]:
+        season = plan.entities.get("season") if isinstance(plan.entities.get("season"), int) else None
+        team = str(plan.entities.get("team")) if plan.entities.get("team") else None
+        rows = list_results(self.conn, season=season, team=team)
+        limited = rows[: int(plan.limit or 10)]
+        return {
+            "value": limited,
+            "label": f"Results ({len(limited)} shown)",
+            "evidence": {
+                "interpretation": "result listing",
+                "filters": {"season": season, "team": team},
+                "source_tables": ["match_metadata"],
+                "sample_size": len(rows),
+            },
+        }
+
+    def _points_table(self, plan: QueryPlan) -> dict[str, Any]:
+        season = plan.entities.get("season")
+        if not isinstance(season, int):
+            raise ValueError("season is required")
+        table = points_table(self.conn, season)
+        return {
+            "value": table,
+            "label": f"Points table {season}",
+            "evidence": {
+                "interpretation": "computed season standings",
+                "filters": {"season": season},
+                "source_tables": ["match_metadata", "innings_summary"],
+                "sample_size": len(table),
+            },
+        }
+
+    def _top_performers(self, plan: QueryPlan) -> dict[str, Any]:
+        season = plan.entities.get("season") if isinstance(plan.entities.get("season"), int) else None
+        limit = int(plan.limit or 5)
+        top = top_performers(self.conn, season=season, limit=limit)
+        return {
+            "value": top,
+            "label": "Top performers",
+            "evidence": {
+                "interpretation": "season top performer aggregates",
+                "filters": {"season": season, "limit": limit},
+                "source_tables": ["deliveries"],
+            },
+        }
+
     def execute(self, plan: QueryPlan) -> dict[str, Any]:
         if plan.operation == "clarify":
             reason = str(plan.entities.get("reason", "ambiguous_entity"))
@@ -1419,6 +1656,24 @@ class QueryExecutor:
             if plan.entity == "player_vs_bowling_type":
                 return self._player_vs_bowling_type(plan)
 
+        if plan.operation == "knowledge_lookup" and plan.entity == "player_knowledge":
+            return self._knowledge_lookup(plan)
+
+        if plan.operation == "team_season_info" and plan.entity == "team_season":
+            return self._team_season_info(plan)
+
+        if plan.operation == "fixtures" and plan.entity == "fixtures":
+            return self._fixtures(plan)
+
+        if plan.operation == "results" and plan.entity == "results":
+            return self._results(plan)
+
+        if plan.operation == "points_table" and plan.entity == "points_table":
+            return self._points_table(plan)
+
+        if plan.operation == "top_performers" and plan.entity == "top_performers":
+            return self._top_performers(plan)
+
         if plan.operation == "rank":
             return self._rank(plan)
 
@@ -1434,6 +1689,7 @@ class QueryExecutor:
 class AskMatchGenomeEngine:
     def __init__(self, conn: sqlite3.Connection, provider: AskPlanProvider | None = None) -> None:
         self.conn = conn
+        ensure_knowledge_bootstrap(self.conn)
         self.semantic = SemanticResolver(conn)
         rule_provider = RuleBasedPlanProvider()
         llm_provider = LlmAskPlanProvider()
@@ -1509,7 +1765,7 @@ class AskMatchGenomeEngine:
                     {
                         "question": sub,
                         "status": "unsupported",
-                        "message": "MatchGenome could not map this to supported IPL analytics semantics with verified local data.",
+                        "message": "MatchGenome does not currently have a verified knowledge path for this question.",
                     }
                 )
                 continue

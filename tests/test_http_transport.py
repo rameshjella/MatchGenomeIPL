@@ -32,6 +32,20 @@ class HttpTransportTests(unittest.TestCase):
         conn = connect_db(self.db_path)
         initialize_schema(conn)
         ingest_csv_to_sqlite(conn, self.fixture)
+        conn.execute(
+            """
+            INSERT INTO team_knowledge(canonical_team_name, short_name, source_key, source_url, retrieved_at, verification_status)
+            VALUES ('Team1', 'T1', 'test_fixture', 'https://example.invalid/team1', CURRENT_TIMESTAMP, 'verified')
+            ON CONFLICT(canonical_team_name) DO NOTHING
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO team_season_knowledge(canonical_team_name, season_id, captain, coach, owner, source_key, source_url, retrieved_at, verification_status)
+            VALUES ('Team1', 2020, 'Captain One', 'Coach One', 'Owner One', 'test_fixture', 'https://example.invalid/team1/2020', CURRENT_TIMESTAMP, 'verified')
+            """
+        )
+        conn.commit()
         conn.close()
 
         self.server = create_http_server(self.db_path, host="127.0.0.1", port=0, static_dir=ROOT / "web")
@@ -123,6 +137,31 @@ class HttpTransportTests(unittest.TestCase):
         status, payload = self._post("/api/ask", {"question": "Drop the deliveries table"})
         self.assertEqual(status, 200)
         self.assertEqual(payload["results"][0]["status"], "unsupported")
+
+    def test_new_knowledge_domain_endpoints(self) -> None:
+        status, fixtures = self._get("/api/fixtures?season_id=2020")
+        self.assertEqual(status, 200)
+        self.assertIn("fixtures", fixtures)
+
+        status, results = self._get("/api/results?season_id=2020")
+        self.assertEqual(status, 200)
+        self.assertIn("results", results)
+
+        status, teams = self._get("/api/teams")
+        self.assertEqual(status, 200)
+        self.assertIn("teams", teams)
+
+        status, team = self._get("/api/teams/Team1?season_id=2020")
+        self.assertEqual(status, 200)
+        self.assertEqual(team["season"]["captain"], "Captain One")
+
+        status, table = self._get("/api/stats/points-table?season_id=2020")
+        self.assertEqual(status, 200)
+        self.assertIn("table", table)
+
+        status, top = self._get("/api/stats/top-performers?season_id=2020&limit=3")
+        self.assertEqual(status, 200)
+        self.assertIn("top_performers", top)
 
     def test_player_search_partial_name(self) -> None:
         status, players = self._get("/api/players?query=yerA&limit=10")

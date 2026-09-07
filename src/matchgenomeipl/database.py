@@ -236,6 +236,80 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (source_key) REFERENCES enrichment_source(source_key)
         );
 
+        CREATE TABLE IF NOT EXISTS player_knowledge (
+            canonical_player_name TEXT PRIMARY KEY,
+            full_name TEXT,
+            date_of_birth TEXT,
+            nationality TEXT,
+            role TEXT,
+            batting_style TEXT,
+            bowling_style TEXT,
+            biography TEXT,
+            spouse_name TEXT,
+            children_count INTEGER,
+            source_key TEXT NOT NULL,
+            source_url TEXT,
+            retrieved_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            notes TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS player_identity_alias (
+            alias_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alias_name TEXT NOT NULL,
+            canonical_player_name TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            source_url TEXT,
+            retrieved_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            UNIQUE(alias_name, canonical_player_name),
+            FOREIGN KEY (canonical_player_name) REFERENCES player_knowledge(canonical_player_name)
+        );
+
+        CREATE TABLE IF NOT EXISTS team_knowledge (
+            canonical_team_name TEXT PRIMARY KEY,
+            short_name TEXT,
+            historical_name TEXT,
+            home_venue TEXT,
+            logo_asset_path TEXT,
+            banner_asset_path TEXT,
+            source_key TEXT NOT NULL,
+            source_url TEXT,
+            retrieved_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            notes TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS team_season_knowledge (
+            team_season_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            canonical_team_name TEXT NOT NULL,
+            season_id INTEGER NOT NULL,
+            captain TEXT,
+            coach TEXT,
+            owner TEXT,
+            home_venue TEXT,
+            source_key TEXT NOT NULL,
+            source_url TEXT,
+            retrieved_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            notes TEXT,
+            UNIQUE(canonical_team_name, season_id, captain, coach, owner, home_venue),
+            FOREIGN KEY (canonical_team_name) REFERENCES team_knowledge(canonical_team_name)
+        );
+
+        CREATE TABLE IF NOT EXISTS match_highlight_reference (
+            highlight_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            source_url TEXT,
+            reference_type TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            notes TEXT,
+            FOREIGN KEY (match_id) REFERENCES match_metadata(match_id)
+        );
+
         CREATE TABLE IF NOT EXISTS matches (
             match_id INTEGER PRIMARY KEY,
             season_id INTEGER NOT NULL,
@@ -412,6 +486,15 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_deliveries_outcome
             ON deliveries(is_wicket, total_runs);
+
+        CREATE INDEX IF NOT EXISTS idx_player_identity_alias_alias
+            ON player_identity_alias(alias_name);
+
+        CREATE INDEX IF NOT EXISTS idx_team_season_knowledge_team_season
+            ON team_season_knowledge(canonical_team_name, season_id);
+
+        CREATE INDEX IF NOT EXISTS idx_match_highlight_reference_match
+            ON match_highlight_reference(match_id);
 
         CREATE INDEX IF NOT EXISTS idx_batter_bowler_stats_agg
             ON batter_bowler_stats_agg(batter, bowler);

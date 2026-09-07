@@ -20,6 +20,37 @@ class TimeMachineAPI:
     def get_match(self, match_id: int) -> dict[str, Any]:
         return self.service.get_match(match_id)
 
+    def get_fixtures(self, season_id: int | None = None, team: str | None = None, status: str | None = None) -> dict[str, Any]:
+        return {
+            "season_id": season_id,
+            "team": team,
+            "status": status,
+            "fixtures": self.service.list_fixtures(season_id=season_id, team=team, status=status),
+        }
+
+    def get_results(self, season_id: int | None = None, team: str | None = None) -> dict[str, Any]:
+        return {
+            "season_id": season_id,
+            "team": team,
+            "results": self.service.list_results(season_id=season_id, team=team),
+        }
+
+    def get_teams(self) -> dict[str, Any]:
+        return {"teams": self.service.list_teams()}
+
+    def get_team(self, team_name: str, season_id: int | None = None) -> dict[str, Any]:
+        return self.service.get_team(team_name, season_id=season_id)
+
+    def get_points_table(self, season_id: int) -> dict[str, Any]:
+        return {"season_id": season_id, "table": self.service.get_points_table(season_id)}
+
+    def get_top_performers(self, season_id: int | None = None, limit: int = 5) -> dict[str, Any]:
+        return {
+            "season_id": season_id,
+            "limit": limit,
+            "top_performers": self.service.get_top_performers(season_id=season_id, limit=limit),
+        }
+
     def get_match_innings(self, match_id: int) -> dict[str, Any]:
         return {"match_id": match_id, "innings": self.service.list_innings(match_id)}
 

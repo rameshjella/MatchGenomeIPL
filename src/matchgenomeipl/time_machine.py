@@ -10,6 +10,14 @@ from typing import Any
 from uuid import uuid4
 
 from .ask_matchgenome import AskMatchGenomeEngine
+from .ipl_knowledge import (
+    ensure_knowledge_bootstrap,
+    list_fixtures,
+    list_results,
+    points_table,
+    team_season_info,
+    top_performers,
+)
 from .player_intelligence import get_player_intelligence, list_players
 from .prediction import DEFAULT_RUNTIME_MODEL_VERSION, SequentialPredictionSession
 from .runtime_logging import log_sql
@@ -246,8 +254,86 @@ class TimeMachineService:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
+        ensure_knowledge_bootstrap(self.conn)
         self._sessions: dict[str, ReplaySession] = {}
         self._ask_engine = AskMatchGenomeEngine(conn)
+
+    def list_fixtures(
+        self,
+        season_id: int | None = None,
+        team: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return list_fixtures(self.conn, season=season_id, team=team, status=status)
+
+    def list_results(
+        self,
+        season_id: int | None = None,
+        team: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return list_results(self.conn, season=season_id, team=team)
+
+    def list_teams(self) -> list[dict[str, Any]]:
+        rows = self._fetchall(
+            "list_teams",
+            """
+            SELECT canonical_team_name, short_name, historical_name, home_venue, logo_asset_path, banner_asset_path,
+                   source_key, source_url, retrieved_at, verification_status
+            FROM team_knowledge
+            ORDER BY canonical_team_name
+            """,
+        )
+        return [
+            {
+                "team": r["canonical_team_name"],
+                "short_name": r["short_name"],
+                "historical_name": r["historical_name"],
+                "home_venue": r["home_venue"],
+                "logo_asset_path": r["logo_asset_path"],
+                "banner_asset_path": r["banner_asset_path"],
+                "source": r["source_key"],
+                "source_url": r["source_url"],
+                "retrieved_at": r["retrieved_at"],
+                "verification_status": r["verification_status"],
+            }
+            for r in rows
+        ]
+
+    def get_team(self, team_name: str, season_id: int | None = None) -> dict[str, Any]:
+        row = self._fetchone(
+            "get_team",
+            """
+            SELECT canonical_team_name, short_name, historical_name, home_venue, logo_asset_path, banner_asset_path,
+                   source_key, source_url, retrieved_at, verification_status
+            FROM team_knowledge
+            WHERE canonical_team_name = ?
+            """,
+            (team_name,),
+        )
+        if row is None:
+            raise ValueError("team not found")
+        season = team_season_info(self.conn, team_name, season_id) if isinstance(season_id, int) else None
+        return {
+            "team": {
+                "name": row["canonical_team_name"],
+                "short_name": row["short_name"],
+                "historical_name": row["historical_name"],
+                "home_venue": row["home_venue"],
+                "logo_asset_path": row["logo_asset_path"],
+                "banner_asset_path": row["banner_asset_path"],
+                "source": row["source_key"],
+                "source_url": row["source_url"],
+                "retrieved_at": row["retrieved_at"],
+                "verification_status": row["verification_status"],
+            },
+            "season": season,
+        }
+
+    def get_points_table(self, season_id: int) -> list[dict[str, Any]]:
+        return points_table(self.conn, season=season_id)
+
+    def get_top_performers(self, season_id: int | None = None, limit: int = 5) -> dict[str, Any]:
+        return top_performers(self.conn, season=season_id, limit=limit)
 
     def _fetchall(self, operation: str, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         started = time.perf_counter()

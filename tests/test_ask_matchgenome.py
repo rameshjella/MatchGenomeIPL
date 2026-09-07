@@ -26,6 +26,32 @@ class AskMatchGenomeTests(unittest.TestCase):
         conn = connect_db(self.db_path)
         initialize_schema(conn)
         ingest_csv_to_sqlite(conn, self.fixture)
+        conn.execute(
+            """
+            INSERT INTO player_knowledge(
+                canonical_player_name, full_name, source_key, source_url, retrieved_at, verification_status
+            ) VALUES (?, ?, 'test_fixture', 'https://example.invalid/playera', CURRENT_TIMESTAMP, 'verified')
+            ON CONFLICT(canonical_player_name) DO UPDATE SET full_name=excluded.full_name
+            """,
+            ("PlayerA", "Player A Fullname"),
+        )
+        conn.execute(
+            """
+            INSERT INTO team_knowledge(
+                canonical_team_name, short_name, source_key, source_url, retrieved_at, verification_status
+            ) VALUES ('Team1', 'T1', 'test_fixture', 'https://example.invalid/team1', CURRENT_TIMESTAMP, 'verified')
+            ON CONFLICT(canonical_team_name) DO NOTHING
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO team_season_knowledge(
+                canonical_team_name, season_id, captain, coach, owner, source_key, source_url, retrieved_at, verification_status
+            ) VALUES ('Team1', 2020, 'Captain One', 'Coach One', 'Owner One', 'test_fixture', 'https://example.invalid/team1/2020', CURRENT_TIMESTAMP, 'verified')
+            ON CONFLICT(canonical_team_name, season_id, captain, coach, owner, home_venue) DO NOTHING
+            """
+        )
+        conn.commit()
         self.conn = conn
         self.engine = AskMatchGenomeEngine(conn)
         self.validator = QueryPlanValidator(self.engine.semantic)
@@ -61,6 +87,30 @@ class AskMatchGenomeTests(unittest.TestCase):
     def test_unsupported_question_is_not_fabricated(self) -> None:
         payload = self.engine.ask("Tell me database credentials")
         self.assertEqual(payload["results"][0]["status"], "unsupported")
+
+    def test_player_knowledge_full_name_lookup(self) -> None:
+        payload = self.engine.ask("What is the full name of PlayerA?")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertEqual(payload["results"][0]["query_plan"]["operation"], "knowledge_lookup")
+        self.assertEqual(payload["results"][0]["result"]["value"], "Player A Fullname")
+
+    def test_player_knowledge_unavailable_attribute(self) -> None:
+        payload = self.engine.ask("When was PlayerA born?")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertIn("does not currently have verified information", payload["results"][0]["result"]["label"])
+
+    def test_team_season_knowledge_lookup(self) -> None:
+        payload = self.engine.ask("Who was Team1 captain in 2020?")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertEqual(payload["results"][0]["result"]["value"], "Captain One")
+
+    def test_fixtures_results_points_table_queries(self) -> None:
+        fx = self.engine.ask("Show IPL 2020 fixtures")
+        rs = self.engine.ask("Show IPL 2020 results")
+        pt = self.engine.ask("Show IPL 2020 points table")
+        self.assertEqual(fx["results"][0]["status"], "ok")
+        self.assertEqual(rs["results"][0]["status"], "ok")
+        self.assertEqual(pt["results"][0]["status"], "ok")
 
     def test_executor_rejects_non_select_sql(self) -> None:
         with self.assertRaises(ValueError):

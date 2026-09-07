@@ -16,6 +16,10 @@
         </div>
         <nav class="mode-nav" aria-label="Product navigation">
           <button id="goHomeBtn" type="button" class="primary">Home</button>
+          <button id="goFixturesBtn" type="button">Fixtures</button>
+          <button id="goResultsBtn" type="button">Results</button>
+          <button id="goTeamsBtn" type="button">Teams</button>
+          <button id="goStatsBtn" type="button">Stats</button>
           <button id="goTimeMachineBtn" type="button">Time Machine</button>
           <button id="goPlayerIntelligenceBtn" type="button">Players</button>
           <button id="goAskBtn" type="button">Ask MatchGenome</button>
@@ -74,6 +78,58 @@
           <article class="ask-results" id="askResults">
             <p class="muted">Answers appear here with evidence and query interpretation.</p>
           </article>
+        </section>
+      </section>
+
+      <section id="fixturesView" class="view" hidden>
+        <section class="hero-card">
+          <h2>Fixtures</h2>
+          <p class="muted">Upcoming and scheduled IPL fixtures from verified match metadata.</p>
+          <div class="search-row">
+            <select id="fixturesSeasonSelect"></select>
+            <input id="fixturesTeamInput" type="search" placeholder="Filter team" />
+            <button id="fixturesRefreshBtn" type="button">Refresh</button>
+          </div>
+          <div id="fixturesList" class="panel-block">Fixtures will appear here.</div>
+        </section>
+      </section>
+
+      <section id="resultsView" class="view" hidden>
+        <section class="hero-card">
+          <h2>Results</h2>
+          <p class="muted">Completed IPL match outcomes with winner, margin, and venue.</p>
+          <div class="search-row">
+            <select id="resultsSeasonSelect"></select>
+            <input id="resultsTeamInput" type="search" placeholder="Filter team" />
+            <button id="resultsRefreshBtn" type="button">Refresh</button>
+          </div>
+          <div id="resultsList" class="panel-block">Results will appear here.</div>
+        </section>
+      </section>
+
+      <section id="teamsView" class="view" hidden>
+        <section class="hero-card">
+          <h2>Teams</h2>
+          <p class="muted">Team overview plus season-specific leadership where verified data exists.</p>
+          <div class="search-row">
+            <select id="teamsSelect"></select>
+            <select id="teamSeasonSelect"></select>
+            <button id="teamLoadBtn" type="button">Open Team</button>
+          </div>
+          <div id="teamDetails" class="panel-block">Select a team to view details.</div>
+        </section>
+      </section>
+
+      <section id="statsView" class="view" hidden>
+        <section class="hero-card">
+          <h2>Stats</h2>
+          <p class="muted">Top performers and season points table from IPL database aggregates.</p>
+          <div class="search-row">
+            <select id="statsSeasonSelect"></select>
+            <button id="statsRefreshBtn" type="button">Refresh</button>
+          </div>
+          <div id="topPerformersBlock" class="panel-block"></div>
+          <div id="pointsTableBlock" class="panel-block"></div>
         </section>
       </section>
 

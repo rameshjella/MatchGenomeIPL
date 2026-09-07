@@ -501,7 +501,12 @@ button:disabled {
 .search-row {
   display: grid;
   gap: 8px;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.search-row button {
+  justify-self: start;
 }
 
 .search-results {

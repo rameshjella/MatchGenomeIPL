@@ -45,17 +45,26 @@ const state = {
   activePlayer: null,
   playerCapabilities: { hasBatting: false, hasBowling: false },
   hasTeamIdOnlyData: false,
+  teams: [],
 };
 
 const els = {
   homeView: document.getElementById("homeView"),
   askView: document.getElementById("askView"),
+  fixturesView: document.getElementById("fixturesView"),
+  resultsView: document.getElementById("resultsView"),
+  teamsView: document.getElementById("teamsView"),
+  statsView: document.getElementById("statsView"),
   timeMachineView: document.getElementById("timeMachineView"),
   playerView: document.getElementById("playerView"),
   methodologyView: document.getElementById("methodologyView"),
   statusBanner: document.getElementById("statusBanner"),
 
   goHomeBtn: document.getElementById("goHomeBtn"),
+  goFixturesBtn: document.getElementById("goFixturesBtn"),
+  goResultsBtn: document.getElementById("goResultsBtn"),
+  goTeamsBtn: document.getElementById("goTeamsBtn"),
+  goStatsBtn: document.getElementById("goStatsBtn"),
   goTimeMachineBtn: document.getElementById("goTimeMachineBtn"),
   goAskBtn: document.getElementById("goAskBtn"),
   goPlayerIntelligenceBtn: document.getElementById("goPlayerIntelligenceBtn"),
@@ -69,6 +78,26 @@ const els = {
   askSubmitBtn: document.getElementById("askSubmitBtn"),
   askExamples: document.getElementById("askExamples"),
   askResults: document.getElementById("askResults"),
+
+  fixturesSeasonSelect: document.getElementById("fixturesSeasonSelect"),
+  fixturesTeamInput: document.getElementById("fixturesTeamInput"),
+  fixturesRefreshBtn: document.getElementById("fixturesRefreshBtn"),
+  fixturesList: document.getElementById("fixturesList"),
+
+  resultsSeasonSelect: document.getElementById("resultsSeasonSelect"),
+  resultsTeamInput: document.getElementById("resultsTeamInput"),
+  resultsRefreshBtn: document.getElementById("resultsRefreshBtn"),
+  resultsList: document.getElementById("resultsList"),
+
+  teamsSelect: document.getElementById("teamsSelect"),
+  teamSeasonSelect: document.getElementById("teamSeasonSelect"),
+  teamLoadBtn: document.getElementById("teamLoadBtn"),
+  teamDetails: document.getElementById("teamDetails"),
+
+  statsSeasonSelect: document.getElementById("statsSeasonSelect"),
+  statsRefreshBtn: document.getElementById("statsRefreshBtn"),
+  topPerformersBlock: document.getElementById("topPerformersBlock"),
+  pointsTableBlock: document.getElementById("pointsTableBlock"),
 
   seasonSelect: document.getElementById("seasonSelect"),
   matchSearchInput: document.getElementById("matchSearchInput"),
@@ -242,6 +271,10 @@ function setView(view) {
   const map = {
     home: els.homeView,
     ask: els.askView,
+    fixtures: els.fixturesView,
+    results: els.resultsView,
+    teams: els.teamsView,
+    stats: els.statsView,
     time_machine: els.timeMachineView,
     player: els.playerView,
     methodology: els.methodologyView,
@@ -252,6 +285,10 @@ function setView(view) {
 
   const nav = [
     [els.goHomeBtn, view === "home"],
+    [els.goFixturesBtn, view === "fixtures"],
+    [els.goResultsBtn, view === "results"],
+    [els.goTeamsBtn, view === "teams"],
+    [els.goStatsBtn, view === "stats"],
     [els.goTimeMachineBtn, view === "time_machine"],
     [els.goAskBtn, view === "ask"],
     [els.goPlayerIntelligenceBtn, view === "player"],
@@ -261,6 +298,82 @@ function setView(view) {
     button.classList.toggle("primary", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
+}
+
+function formatMatchCard(item) {
+  const winner = item.winner ? `Winner: ${item.winner}` : "Winner: pending";
+  return `
+    <div class='panel-block'>
+      <p><strong>${teamLabel(item.team_a, "Team A")} vs ${teamLabel(item.team_b, "Team B")}</strong></p>
+      <p class='muted'>IPL ${item.season_id} · Match ${item.match_number || "-"} · ${item.match_date || "Date unknown"}</p>
+      <p class='muted'>${item.venue || "Venue unknown"}${item.city ? `, ${item.city}` : ""}</p>
+      <p class='muted'>${item.status} · ${winner}</p>
+    </div>
+  `;
+}
+
+async function loadFixtures() {
+  const season = Number(els.fixturesSeasonSelect.value || 0);
+  const team = (els.fixturesTeamInput.value || "").trim();
+  const q = [`season_id=${season}`];
+  if (team) q.push(`team=${encodeURIComponent(team)}`);
+  const payload = await api.get(`/api/fixtures?${q.join("&")}`);
+  const rows = payload.fixtures || [];
+  els.fixturesList.innerHTML = rows.length ? rows.map(formatMatchCard).join("") : "<p class='muted'>No fixtures found for this filter.</p>";
+}
+
+async function loadResults() {
+  const season = Number(els.resultsSeasonSelect.value || 0);
+  const team = (els.resultsTeamInput.value || "").trim();
+  const q = [`season_id=${season}`];
+  if (team) q.push(`team=${encodeURIComponent(team)}`);
+  const payload = await api.get(`/api/results?${q.join("&")}`);
+  const rows = payload.results || [];
+  els.resultsList.innerHTML = rows.length ? rows.map(formatMatchCard).join("") : "<p class='muted'>No results found for this filter.</p>";
+}
+
+async function loadTeams() {
+  const payload = await api.get("/api/teams");
+  state.teams = payload.teams || [];
+  els.teamsSelect.innerHTML = "";
+  state.teams.forEach((t) => els.teamsSelect.appendChild(option(t.team, t.team)));
+}
+
+async function loadTeamDetails() {
+  const team = String(els.teamsSelect.value || "");
+  const season = Number(els.teamSeasonSelect.value || 0);
+  if (!team || !season) return;
+  const payload = await api.get(`/api/teams/${encodeURIComponent(team)}?season_id=${season}`);
+  const info = payload.team || {};
+  const seasonInfo = payload.season || {};
+  els.teamDetails.innerHTML = `
+    <p><strong>${info.name || team}</strong></p>
+    <p class='muted'>Short: ${info.short_name || "-"} · Home: ${info.home_venue || "-"}</p>
+    <p>Season ${season}: Captain ${seasonInfo.captain || "Unknown"}, Coach ${seasonInfo.coach || "Unknown"}, Owner ${seasonInfo.owner || "Unknown"}</p>
+    <p class='muted'>Source: ${seasonInfo.source || info.source || "-"} · Verification: ${seasonInfo.verification_status || info.verification_status || "-"}</p>
+  `;
+}
+
+async function loadStatsWorkspace() {
+  const season = Number(els.statsSeasonSelect.value || 0);
+  if (!season) return;
+  const top = await api.get(`/api/stats/top-performers?season_id=${season}&limit=5`);
+  const table = await api.get(`/api/stats/points-table?season_id=${season}`);
+  const runs = (top.top_performers?.runs || []).map((r) => `<li>${r.player}: ${r.value}</li>`).join("");
+  const wickets = (top.top_performers?.wickets || []).map((r) => `<li>${r.player}: ${r.value}</li>`).join("");
+  els.topPerformersBlock.innerHTML = `
+    <h4>Top Performers</h4>
+    <p><strong>Runs</strong></p><ul>${runs || "<li>No data</li>"}</ul>
+    <p><strong>Wickets</strong></p><ul>${wickets || "<li>No data</li>"}</ul>
+  `;
+  els.pointsTableBlock.innerHTML = `
+    <h4>Points Table</h4>
+    <div class='table-wrap'><table class='mini-table'><thead><tr><th>Team</th><th>M</th><th>W</th><th>L</th><th>NR</th><th>Pts</th><th>NRR</th></tr></thead><tbody>
+      ${(table.table || [])
+        .map((r) => `<tr><td>${r.team}</td><td>${r.matches}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.no_result}</td><td>${r.points}</td><td>${r.net_run_rate}</td></tr>`)
+        .join("")}
+    </tbody></table></div>
+  `;
 }
 
 function setReplayTab(tab) {
@@ -1102,6 +1215,29 @@ function syncRoute() {
     return;
   }
 
+  if (route.view === "fixtures") {
+    setView("fixtures");
+    loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error"));
+    return;
+  }
+
+  if (route.view === "results") {
+    setView("results");
+    loadResults().catch((err) => setStatus(err.message || "Failed to load results", "error"));
+    return;
+  }
+
+  if (route.view === "teams") {
+    setView("teams");
+    return;
+  }
+
+  if (route.view === "stats") {
+    setView("stats");
+    loadStatsWorkspace().catch((err) => setStatus(err.message || "Failed to load stats", "error"));
+    return;
+  }
+
   if (route.view === "time_machine") {
     setView("time_machine");
     return;
@@ -1117,6 +1253,10 @@ function syncRoute() {
 
 function attachEvents() {
   els.goHomeBtn.addEventListener("click", () => setRoute({ view: "home" }));
+  els.goFixturesBtn.addEventListener("click", () => setRoute({ view: "fixtures" }));
+  els.goResultsBtn.addEventListener("click", () => setRoute({ view: "results" }));
+  els.goTeamsBtn.addEventListener("click", () => setRoute({ view: "teams" }));
+  els.goStatsBtn.addEventListener("click", () => setRoute({ view: "stats" }));
   els.goTimeMachineBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
   els.goAskBtn.addEventListener("click", () => setRoute({ view: "ask" }));
   els.goPlayerIntelligenceBtn.addEventListener("click", () => setRoute({ view: "player", player: state.activePlayer || "" }));
@@ -1127,6 +1267,11 @@ function attachEvents() {
   els.goPlayersIntroBtn.addEventListener("click", () => setRoute({ view: "player", player: state.activePlayer || "" }));
 
   els.askSubmitBtn.addEventListener("click", () => runAsk().catch((err) => setStatus(err.message || "Ask failed.", "error")));
+
+  els.fixturesRefreshBtn.addEventListener("click", () => loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error")));
+  els.resultsRefreshBtn.addEventListener("click", () => loadResults().catch((err) => setStatus(err.message || "Failed to load results", "error")));
+  els.teamLoadBtn.addEventListener("click", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
+  els.statsRefreshBtn.addEventListener("click", () => loadStatsWorkspace().catch((err) => setStatus(err.message || "Failed to load stats", "error")));
   els.askInput.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       runAsk().catch((err) => setStatus(err.message || "Ask failed.", "error"));
@@ -1191,6 +1336,11 @@ async function bootstrap() {
     await loadSeasons();
     await loadMatches();
     await loadInnings();
+    await loadTeams();
+    [els.fixturesSeasonSelect, els.resultsSeasonSelect, els.statsSeasonSelect, els.teamSeasonSelect].forEach((node) => {
+      node.innerHTML = "";
+      state.seasons.forEach((s) => node.appendChild(option(`Season ${s.season_id}`, s.season_id)));
+    });
     attachEvents();
     setReplayTab("prediction");
     setPlayerTab("overview");

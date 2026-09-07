@@ -70,6 +70,43 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
                 _json_response(self, HTTPStatus.OK, self._app().api.get_seasons())
                 return
 
+            if route == "/api/fixtures":
+                season_id = int(query["season_id"][0]) if "season_id" in query else None
+                team = str(query["team"][0]) if "team" in query else None
+                status = str(query["status"][0]) if "status" in query else None
+                _json_response(self, HTTPStatus.OK, self._app().api.get_fixtures(season_id=season_id, team=team, status=status))
+                return
+
+            if route == "/api/results":
+                season_id = int(query["season_id"][0]) if "season_id" in query else None
+                team = str(query["team"][0]) if "team" in query else None
+                _json_response(self, HTTPStatus.OK, self._app().api.get_results(season_id=season_id, team=team))
+                return
+
+            if route == "/api/teams":
+                _json_response(self, HTTPStatus.OK, self._app().api.get_teams())
+                return
+
+            match = re.fullmatch(r"/api/teams/(.+)", route)
+            if match:
+                team_name = unquote(match.group(1))
+                season_id = int(query["season_id"][0]) if "season_id" in query else None
+                _json_response(self, HTTPStatus.OK, self._app().api.get_team(team_name, season_id=season_id))
+                return
+
+            if route == "/api/stats/points-table":
+                season_id = int(query["season_id"][0]) if "season_id" in query else None
+                if season_id is None:
+                    raise ValueError("season_id is required")
+                _json_response(self, HTTPStatus.OK, self._app().api.get_points_table(season_id))
+                return
+
+            if route == "/api/stats/top-performers":
+                season_id = int(query["season_id"][0]) if "season_id" in query else None
+                limit = int(query["limit"][0]) if "limit" in query else 5
+                _json_response(self, HTTPStatus.OK, self._app().api.get_top_performers(season_id=season_id, limit=limit))
+                return
+
             match = re.fullmatch(r"/api/seasons/(\d+)/matches", route)
             if match:
                 season_id = int(match.group(1))
