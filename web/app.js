@@ -29,6 +29,7 @@ const api = {
 const state = {
   view: "home",
   matchesTab: "fixtures",
+  statsTab: "overview",
   uiState: UiState.SELECT_MATCH,
   replayTab: "prediction",
   playerTab: "overview",
@@ -110,7 +111,23 @@ const els = {
 
   statsSeasonSelect: document.getElementById("statsSeasonSelect"),
   statsRefreshBtn: document.getElementById("statsRefreshBtn"),
-  topPerformersBlock: document.getElementById("topPerformersBlock"),
+  statsTabOverviewBtn: document.getElementById("statsTabOverviewBtn"),
+  statsTabBattingBtn: document.getElementById("statsTabBattingBtn"),
+  statsTabBowlingBtn: document.getElementById("statsTabBowlingBtn"),
+  statsTabRecordsBtn: document.getElementById("statsTabRecordsBtn"),
+  statsTabGraphsBtn: document.getElementById("statsTabGraphsBtn"),
+  statsTabPointsBtn: document.getElementById("statsTabPointsBtn"),
+  statsPanelOverview: document.getElementById("statsPanelOverview"),
+  statsPanelBatting: document.getElementById("statsPanelBatting"),
+  statsPanelBowling: document.getElementById("statsPanelBowling"),
+  statsPanelRecords: document.getElementById("statsPanelRecords"),
+  statsPanelGraphs: document.getElementById("statsPanelGraphs"),
+  statsPanelPoints: document.getElementById("statsPanelPoints"),
+  statsOverviewBlock: document.getElementById("statsOverviewBlock"),
+  statsBattingBlock: document.getElementById("statsBattingBlock"),
+  statsBowlingBlock: document.getElementById("statsBowlingBlock"),
+  statsRecordsBlock: document.getElementById("statsRecordsBlock"),
+  statsGraphsBlock: document.getElementById("statsGraphsBlock"),
   pointsTableBlock: document.getElementById("pointsTableBlock"),
 
   seasonSelect: document.getElementById("seasonSelect"),
@@ -361,6 +378,24 @@ function setMatchesTab(tab) {
   }
 }
 
+function setStatsTab(tab) {
+  const normalized = ["overview", "batting", "bowling", "records", "graphs", "points"].includes(tab) ? tab : "overview";
+  state.statsTab = normalized;
+  const tabs = [
+    [els.statsTabOverviewBtn, els.statsPanelOverview, normalized === "overview"],
+    [els.statsTabBattingBtn, els.statsPanelBatting, normalized === "batting"],
+    [els.statsTabBowlingBtn, els.statsPanelBowling, normalized === "bowling"],
+    [els.statsTabRecordsBtn, els.statsPanelRecords, normalized === "records"],
+    [els.statsTabGraphsBtn, els.statsPanelGraphs, normalized === "graphs"],
+    [els.statsTabPointsBtn, els.statsPanelPoints, normalized === "points"],
+  ];
+  tabs.forEach(([btn, panel, active]) => {
+    if (!btn || !panel) return;
+    btn.classList.toggle("active", active);
+    panel.hidden = !active;
+  });
+}
+
 function focusFixtureDetail() {
   els.fixtureDetail.scrollIntoView({ behavior: "smooth", block: "start" });
   els.fixtureDetail.focus({ preventScroll: true });
@@ -486,12 +521,25 @@ async function loadFixtureDetail(matchId) {
     </div>
     <div class='row-actions'>
       <button type='button' class='primary' id='openFixtureInTimeMachineBtn'>Open in Time Machine</button>
+      <button type='button' id='openFixtureStatsBtn'>Season Stats</button>
+      <button type='button' id='openFixtureAskBtn'>Ask about this match</button>
     </div>
   `;
   const btn = document.getElementById("openFixtureInTimeMachineBtn");
+  const statsBtn = document.getElementById("openFixtureStatsBtn");
+  const askBtn = document.getElementById("openFixtureAskBtn");
   if (btn) {
     btn.addEventListener("click", () => {
       setRoute({ view: "replay", season_id: match.season_id, match_id: matchId });
+    });
+  }
+  if (statsBtn) {
+    statsBtn.addEventListener("click", () => setRoute({ view: "stats", tab: "overview", season_id: match.season_id }));
+  }
+  if (askBtn) {
+    askBtn.addEventListener("click", () => {
+      els.askInput.value = `What was the result of IPL ${match.season_id} match ${meta.match_number || matchId}?`;
+      setRoute({ view: "ask" });
     });
   }
   focusFixtureDetail();
@@ -545,17 +593,75 @@ async function loadTeamDetails() {
 async function loadStatsWorkspace() {
   const season = Number(els.statsSeasonSelect.value || 0);
   if (!season) return;
+  const [overview, board, table] = await Promise.all([
+    api.get(`/api/stats/overview?season_id=${season}`),
+    api.get(`/api/stats/leaderboards?season_id=${season}&limit=8`),
+    api.get(`/api/stats/points-table?season_id=${season}`),
+  ]);
   const top = await api.get(`/api/stats/top-performers?season_id=${season}&limit=5`);
-  const table = await api.get(`/api/stats/points-table?season_id=${season}`);
-  const runs = (top.top_performers?.runs || []).map((r) => `<li>${r.player}: ${r.value}</li>`).join("");
-  const wickets = (top.top_performers?.wickets || []).map((r) => `<li>${r.player}: ${r.value}</li>`).join("");
-  els.topPerformersBlock.innerHTML = `
-    <h4>Top Performers</h4>
-    <p><strong>Orange Cap Signal (Runs)</strong></p><ul>${runs || "<li>No data</li>"}</ul>
-    <p><strong>Purple Cap Signal (Wickets)</strong></p><ul>${wickets || "<li>No data</li>"}</ul>
+  const lb = board.leaderboards || {};
+  const cov = overview.coverage || {};
+  const coverageFlag = cov.metadata_matches && cov.deliveries_matches && cov.metadata_matches >= cov.deliveries_matches ? "High" : "Partial";
+  const renderBoard = (title, rows, qualifier = "") => `
+    <article class='panel-block'>
+      <h5>${title}</h5>
+      ${qualifier ? `<p class='muted'>Qualification: ${qualifier}</p>` : ""}
+      <ol>${(rows || []).slice(0, 8).map((r) => `<li>${r.player}: <strong>${metricDisplay(r.value)}</strong></li>`).join("") || "<li class='muted'>No verified data.</li>"}</ol>
+    </article>
   `;
+
+  els.statsOverviewBlock.innerHTML = `
+    <h4>Season ${season} Trust Snapshot</h4>
+    <div class='stats-grid'>
+      <div><span>Matches</span><strong>${metricDisplay(overview.matches)}</strong></div>
+      <div><span>Innings</span><strong>${metricDisplay(overview.innings)}</strong></div>
+      <div><span>Runs</span><strong>${metricDisplay(overview.runs)}</strong></div>
+      <div><span>Wickets</span><strong>${metricDisplay(overview.wickets)}</strong></div>
+      <div><span>Fours</span><strong>${metricDisplay(overview.fours)}</strong></div>
+      <div><span>Sixes</span><strong>${metricDisplay(overview.sixes)}</strong></div>
+      <div><span>Dot Balls</span><strong>${metricDisplay(overview.dot_balls)}</strong></div>
+      <div><span>Dot Ball %</span><strong>${metricDisplay(overview.dot_ball_percentage)}%</strong></div>
+    </div>
+    <p class='muted'>Coverage confidence: ${coverageFlag} · Deliveries matches ${metricDisplay(cov.deliveries_matches)} · Metadata matches ${metricDisplay(cov.metadata_matches)}.</p>
+    <p class='muted'>Definitions: ${overview.definitions?.dot_balls || "-"}; ${overview.definitions?.wickets || "-"}.</p>
+  `;
+
+  els.statsBattingBlock.innerHTML = `
+    <h4>Batting Leaderboards</h4>
+    <div class='launch-grid'>
+      ${renderBoard("Orange Cap (Runs)", lb.orange_cap_runs)}
+      ${renderBoard("Most Sixes", lb.most_sixes)}
+      ${renderBoard("Most Fours", lb.most_fours)}
+      ${renderBoard("Best Strike Rate", lb.best_strike_rate, board.qualification?.best_strike_rate || "")}
+    </div>
+  `;
+
+  els.statsBowlingBlock.innerHTML = `
+    <h4>Bowling Leaderboards</h4>
+    <div class='launch-grid'>
+      ${renderBoard("Purple Cap (Wickets)", lb.purple_cap_wickets)}
+      ${renderBoard("Best Economy", lb.best_economy, board.qualification?.best_economy || "")}
+      <article class='panel-block'>
+        <h5>Current Top Bowlers Signal</h5>
+        <ol>${(top.top_performers?.wickets || []).map((r) => `<li>${r.player}: <strong>${r.value}</strong></li>`).join("") || "<li class='muted'>No verified data.</li>"}</ol>
+      </article>
+    </div>
+  `;
+
+  els.statsRecordsBlock.innerHTML = `
+    <h4>Records</h4>
+    ${renderBoard("Highest Score", lb.highest_score)}
+  `;
+
+  els.statsGraphsBlock.innerHTML = `
+    <h4>Graphs</h4>
+    <p class='muted'>Interactive trajectory graphs are backed by local data and will appear here as you filter players/teams in upcoming iterations.</p>
+    <p class='muted'>Available now: season trajectories in Players and Replay evidence tabs.</p>
+  `;
+
   els.pointsTableBlock.innerHTML = `
     <h4>Points Table</h4>
+    <p class='muted'>P: played · W: wins · L: losses · NR: no result · Pts: points · NRR uses all-out full-overs denominator.</p>
     <div class='table-wrap'><table class='mini-table'><thead><tr><th>Team</th><th>P</th><th>W</th><th>L</th><th>NR</th><th>Pts</th><th>NRR</th></tr></thead><tbody>
       ${(table.table || [])
         .map((r) => `<tr><td>${r.team}</td><td>${r.matches}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.no_result}</td><td>${r.points}</td><td>${r.net_run_rate}</td></tr>`)
@@ -566,11 +672,12 @@ async function loadStatsWorkspace() {
 
 async function loadHomeLaunchpad() {
   const season = Number(els.statsSeasonSelect.value || 0);
-  const [fixturesPayload, resultsPayload, topPayload, tablePayload] = await Promise.all([
+  const [fixturesPayload, resultsPayload, topPayload, tablePayload, overviewPayload] = await Promise.all([
     api.get(`/api/fixtures?season_id=${season}`),
     api.get(`/api/results?season_id=${season}`),
     api.get(`/api/stats/top-performers?season_id=${season}&limit=1`),
     api.get(`/api/stats/points-table?season_id=${season}`),
+    api.get(`/api/stats/overview?season_id=${season}`),
   ]);
 
   const fixtures = fixturesPayload.fixtures || [];
@@ -579,6 +686,7 @@ async function loadHomeLaunchpad() {
   const leader = (tablePayload.table || [])[0];
   const topRun = (((topPayload.top_performers || {}).runs || [])[0]) || null;
   const topWicket = (((topPayload.top_performers || {}).wickets || [])[0]) || null;
+  const coverage = overviewPayload.coverage || {};
 
   if (els.homeUpcoming) {
     els.homeUpcoming.textContent = upcoming
@@ -598,7 +706,10 @@ async function loadHomeLaunchpad() {
   if (els.homeSignals) {
     const runSignal = topRun ? `${topRun.player} leads runs (${topRun.value}).` : "Run leader unavailable.";
     const wicketSignal = topWicket ? `${topWicket.player} leads wickets (${topWicket.value}).` : "Wicket leader unavailable.";
-    els.homeSignals.innerHTML = `<p class='eyebrow'>GENOME SIGNALS</p><p>${runSignal}</p><p>${wicketSignal}</p><p class='muted'>Use Replay for similar situations and pre-ball prediction checks.</p>`;
+    const trustSignal = coverage.deliveries_matches
+      ? `Season coverage: ${coverage.deliveries_matches} matches in deliveries${coverage.metadata_matches ? `, ${coverage.metadata_matches} with metadata` : ""}.`
+      : "Season coverage unavailable.";
+    els.homeSignals.innerHTML = `<p class='eyebrow'>GENOME SIGNALS</p><p>${runSignal}</p><p>${wicketSignal}</p><p>${trustSignal}</p><p class='muted'>Use Replay for similar situations and pre-ball prediction checks.</p>`;
   }
 }
 
@@ -1406,6 +1517,10 @@ function renderAskResults(payload) {
 
       const evidence = item.result?.evidence || {};
       const player = maybePlayerFromAsk(item);
+      const confidence = evidence.verification_status || (status === "ok" ? "derived" : "unverified");
+      const source = evidence.source || "MatchGenome IPL database";
+      const sourceUrl = evidence.source_url ? `<a href='${evidence.source_url}' target='_blank' rel='noreferrer noopener'>source</a>` : "local";
+      const coverage = evidence.sample_size || evidence.matches || evidence.rows || "Available in local dataset";
       return `<article class='ask-result-card'>
         <p class='muted'>Question</p>
         <p><strong>${item.question}</strong></p>
@@ -1413,7 +1528,7 @@ function renderAskResults(payload) {
         ${formatAskValue(item.result?.value)}
         <p class='muted'>Evidence</p>
         <p>${item.result?.label || "Answer from local IPL data."}</p>
-        <p class='muted'>${evidence.source || "MatchGenome IPL database"}</p>
+        <p class='muted'>Source: ${source} (${sourceUrl}) · Confidence: ${confidence} · Coverage: ${coverage}</p>
         ${player ? `<div class='row-actions'><button type='button' class='ask-player-link' data-player='${player}'>Open Player Intelligence</button></div>` : ""}
         <details><summary>Show evidence details</summary>${formatResolutionEntities((item.result && item.result.evidence) || {})}</details>
       </article>`;
@@ -1700,6 +1815,10 @@ function syncRoute() {
 
   if (route.view === "stats") {
     setView("stats");
+    if (route.seasonId) {
+      els.statsSeasonSelect.value = String(route.seasonId);
+    }
+    setStatsTab(route.tab || state.statsTab || "overview");
     loadStatsWorkspace().catch((err) => setStatus(err.message || "Failed to load stats", "error"));
     return;
   }
@@ -1724,7 +1843,7 @@ function attachEvents() {
   els.goMatchesBtn.addEventListener("click", () => setRoute({ view: "matches", tab: state.matchesTab }));
   els.goTeamsBtn.addEventListener("click", () => setRoute({ view: "teams" }));
   els.goPredictBtn.addEventListener("click", () => setRoute({ view: "predict" }));
-  els.goStatsBtn.addEventListener("click", () => setRoute({ view: "stats" }));
+  els.goStatsBtn.addEventListener("click", () => setRoute({ view: "stats", tab: state.statsTab || "overview" }));
   els.goReplayBtn.addEventListener("click", () => setRoute({ view: "replay" }));
   els.goAskBtn.addEventListener("click", () => setRoute({ view: "ask" }));
   els.goPlayerIntelligenceBtn.addEventListener("click", () => setRoute({ view: "player", player: state.activePlayer || "" }));
@@ -1799,6 +1918,18 @@ function attachEvents() {
   els.teamSeasonSelect.addEventListener("change", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
   els.statsRefreshBtn.addEventListener("click", () => loadStatsWorkspace().catch((err) => setStatus(err.message || "Failed to load stats", "error")));
   els.statsSeasonSelect.addEventListener("change", () => loadStatsWorkspace().catch((err) => setStatus(err.message || "Failed to load stats", "error")));
+  const statsTabs = [
+    [els.statsTabOverviewBtn, "overview"],
+    [els.statsTabBattingBtn, "batting"],
+    [els.statsTabBowlingBtn, "bowling"],
+    [els.statsTabRecordsBtn, "records"],
+    [els.statsTabGraphsBtn, "graphs"],
+    [els.statsTabPointsBtn, "points"],
+  ];
+  statsTabs.forEach(([btn, tab]) => {
+    if (!btn) return;
+    btn.addEventListener("click", () => setRoute({ view: "stats", tab, season_id: Number(els.statsSeasonSelect.value || 0) || "" }));
+  });
   els.askInput.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       runAsk().catch((err) => setStatus(err.message || "Ask failed.", "error"));
@@ -1884,6 +2015,7 @@ async function bootstrap() {
     attachEvents();
     setReplayTab("prediction");
     setPlayerTab("overview");
+    setStatsTab("overview");
     setUiState(UiState.SELECT_MATCH);
     syncRoute();
     clearStatus();

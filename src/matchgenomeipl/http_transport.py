@@ -107,6 +107,21 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
                 _json_response(self, HTTPStatus.OK, self._app().api.get_top_performers(season_id=season_id, limit=limit))
                 return
 
+            if route == "/api/stats/overview":
+                season_id = int(query["season_id"][0]) if "season_id" in query else None
+                if season_id is None:
+                    raise ValueError("season_id is required")
+                _json_response(self, HTTPStatus.OK, self._app().api.get_stats_overview(season_id))
+                return
+
+            if route == "/api/stats/leaderboards":
+                season_id = int(query["season_id"][0]) if "season_id" in query else None
+                if season_id is None:
+                    raise ValueError("season_id is required")
+                limit = int(query["limit"][0]) if "limit" in query else 5
+                _json_response(self, HTTPStatus.OK, self._app().api.get_season_leaderboards(season_id, limit=limit))
+                return
+
             match = re.fullmatch(r"/api/seasons/(\d+)/matches", route)
             if match:
                 season_id = int(match.group(1))

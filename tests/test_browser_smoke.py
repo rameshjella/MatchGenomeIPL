@@ -67,10 +67,17 @@ class BrowserSmokeTests(unittest.TestCase):
         with urlopen(self._url("/")) as response:
             html = response.read().decode("utf-8")
         self.assertIn("Reveal the ball to see actual outcome.", html)
-        self.assertIn("See the prediction before you see the outcome.", html)
+        self.assertIn("Know the game. Before it happens.", html)
         self.assertIn("Players", html)
         self.assertIn("Match Discovery", html)
         self.assertIn("matchCards", html)
+
+        stats_overview = self._get_json("/api/stats/overview?season_id=2024")
+        self.assertEqual(int(stats_overview["season_id"]), 2024)
+        self.assertIn("dot_ball_percentage", stats_overview)
+        stats_leaderboards = self._get_json("/api/stats/leaderboards?season_id=2024&limit=3")
+        self.assertEqual(int(stats_leaderboards["season_id"]), 2024)
+        self.assertIn("leaderboards", stats_leaderboards)
 
         seasons = self._get_json("/api/seasons")["seasons"]
         season_id = int(seasons[-1]["season_id"])

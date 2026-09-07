@@ -54,6 +54,12 @@ class TimeMachineAPI:
             "top_performers": self.service.get_top_performers(season_id=season_id, limit=limit),
         }
 
+    def get_stats_overview(self, season_id: int) -> dict[str, Any]:
+        return self.service.get_stats_overview(season_id)
+
+    def get_season_leaderboards(self, season_id: int, limit: int = 5) -> dict[str, Any]:
+        return self.service.get_season_leaderboards(season_id=season_id, limit=limit)
+
     def get_match_innings(self, match_id: int) -> dict[str, Any]:
         return {"match_id": match_id, "innings": self.service.list_innings(match_id)}
 

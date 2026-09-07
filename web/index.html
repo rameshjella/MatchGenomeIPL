@@ -92,7 +92,7 @@
         <section class="ask-layout">
           <article class="ask-composer">
             <h2>Ask MatchGenome</h2>
-            <p class="muted">Ask MatchGenome anything about IPL</p>
+            <p class="muted">Universal IPL knowledge: players, teams, fixtures, results, records, prediction, and replay context.</p>
             <label class="sr-only" for="askInput">Question</label>
             <textarea id="askInput" rows="5" placeholder="How many sixes did Dhoni hit in 2014?"></textarea>
             <div class="row-actions">
@@ -107,7 +107,7 @@
             </div>
           </article>
           <article class="ask-results" id="askResults">
-            <p class="muted">Answers appear here with evidence and query interpretation.</p>
+            <p class="muted">Answers appear here with source-backed evidence and confidence.</p>
           </article>
         </section>
       </section>
@@ -180,13 +180,38 @@
       <section id="statsView" class="view" hidden>
         <section class="hero-card">
           <h2>Stats</h2>
-          <p class="muted">Top performers and season points table from IPL database aggregates.</p>
+          <p class="muted">Trusted IPL definitions with season-aware leaderboards, trajectories, and points-table context.</p>
           <div class="search-row">
             <select id="statsSeasonSelect"></select>
             <button id="statsRefreshBtn" type="button">Refresh</button>
           </div>
-          <div id="topPerformersBlock" class="panel-block"></div>
-          <div id="pointsTableBlock" class="panel-block"></div>
+          <nav class="workspace-tabs">
+            <button id="statsTabOverviewBtn" class="tab-btn active" type="button">Overview</button>
+            <button id="statsTabBattingBtn" class="tab-btn" type="button">Batting</button>
+            <button id="statsTabBowlingBtn" class="tab-btn" type="button">Bowling</button>
+            <button id="statsTabRecordsBtn" class="tab-btn" type="button">Records</button>
+            <button id="statsTabGraphsBtn" class="tab-btn" type="button">Graphs</button>
+            <button id="statsTabPointsBtn" class="tab-btn" type="button">Points Table</button>
+          </nav>
+
+          <section id="statsPanelOverview" class="workspace-panel">
+            <div id="statsOverviewBlock" class="panel-block"></div>
+          </section>
+          <section id="statsPanelBatting" class="workspace-panel" hidden>
+            <div id="statsBattingBlock" class="panel-block"></div>
+          </section>
+          <section id="statsPanelBowling" class="workspace-panel" hidden>
+            <div id="statsBowlingBlock" class="panel-block"></div>
+          </section>
+          <section id="statsPanelRecords" class="workspace-panel" hidden>
+            <div id="statsRecordsBlock" class="panel-block"></div>
+          </section>
+          <section id="statsPanelGraphs" class="workspace-panel" hidden>
+            <div id="statsGraphsBlock" class="panel-block"></div>
+          </section>
+          <section id="statsPanelPoints" class="workspace-panel" hidden>
+            <div id="pointsTableBlock" class="panel-block"></div>
+          </section>
         </section>
       </section>
 

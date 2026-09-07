@@ -246,6 +246,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run strict temporal IPL prediction evaluation")
     parser.add_argument("--max-deliveries", type=int, default=None, help="Optional cap for faster diagnostic runs")
     parser.add_argument("--output", type=str, default="", help="Optional output artifact path")
+    parser.add_argument("--quiet", action="store_true", help="Suppress full JSON stdout; only print artifact paths")
     return parser
 
 
@@ -288,7 +289,8 @@ def main() -> None:
     artifact_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     archive_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
 
-    print(json.dumps(report, indent=2, sort_keys=True))
+    if not args.quiet:
+        print(json.dumps(report, indent=2, sort_keys=True))
     print(f"Saved artifact: {artifact_path}")
     print(f"Saved artifact archive: {archive_path}")
 

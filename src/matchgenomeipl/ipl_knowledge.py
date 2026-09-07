@@ -9,6 +9,8 @@ import re
 import sqlite3
 from typing import Any
 
+from .constants import NON_BOWLER_WICKETS
+
 
 def _norm(value: str | None) -> str:
     raw = "" if value is None else str(value)
@@ -437,6 +439,183 @@ def top_performers(conn: sqlite3.Connection, season: int | None = None, limit: i
     }
 
 
+def season_stats_overview(conn: sqlite3.Connection, season: int) -> dict[str, Any]:
+    non_bowler = tuple(sorted(NON_BOWLER_WICKETS))
+    placeholders = ",".join("?" for _ in non_bowler)
+    row = conn.execute(
+        f"""
+        SELECT
+            COUNT(DISTINCT match_id) AS matches,
+            COUNT(DISTINCT season_id || '-' || match_id || '-' || innings) AS innings,
+            SUM(batter_runs) AS runs,
+            SUM(CASE WHEN legal_ball = 1 THEN 1 ELSE 0 END) AS legal_balls,
+            SUM(CASE WHEN batter_runs = 4 THEN 1 ELSE 0 END) AS fours,
+            SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END) AS sixes,
+            SUM(CASE WHEN legal_ball = 1 AND total_runs = 0 THEN 1 ELSE 0 END) AS dot_balls,
+            SUM(CASE WHEN is_wicket = 1 AND LOWER(COALESCE(wicket_kind, '')) NOT IN ({placeholders}) THEN 1 ELSE 0 END) AS wickets
+        FROM deliveries
+        WHERE season_id = ?
+        """,
+        non_bowler + (season,),
+    ).fetchone()
+    matches = int(row["matches"] or 0)
+    innings = int(row["innings"] or 0)
+    runs = int(row["runs"] or 0)
+    legal_balls = int(row["legal_balls"] or 0)
+    dot_balls = int(row["dot_balls"] or 0)
+    coverage = conn.execute(
+        """
+        SELECT
+            COUNT(*) AS metadata_matches,
+            SUM(CASE WHEN winner IS NOT NULL AND TRIM(winner) <> '' THEN 1 ELSE 0 END) AS completed_matches
+        FROM match_metadata
+        WHERE season_id = ?
+        """,
+        (season,),
+    ).fetchone()
+
+    return {
+        "season_id": season,
+        "matches": matches,
+        "innings": innings,
+        "runs": runs,
+        "legal_balls": legal_balls,
+        "fours": int(row["fours"] or 0),
+        "sixes": int(row["sixes"] or 0),
+        "wickets": int(row["wickets"] or 0),
+        "dot_balls": dot_balls,
+        "dot_ball_percentage": round((dot_balls / legal_balls) * 100.0, 2) if legal_balls else 0.0,
+        "source": "deliveries",
+        "coverage": {
+            "deliveries_matches": matches,
+            "metadata_matches": int((coverage["metadata_matches"] if coverage else 0) or 0),
+            "completed_matches": int((coverage["completed_matches"] if coverage else 0) or 0),
+        },
+        "definitions": {
+            "dot_balls": "legal deliveries where total_runs == 0",
+            "wickets": "bowler-credited wickets excluding run out/retired/obstructing dismissals",
+        },
+    }
+
+
+def season_leaderboards(conn: sqlite3.Connection, season: int, limit: int = 5) -> dict[str, Any]:
+    non_bowler = tuple(sorted(NON_BOWLER_WICKETS))
+    placeholders = ",".join("?" for _ in non_bowler)
+    safe_limit = max(1, min(int(limit), 25))
+
+    runs_rows = conn.execute(
+        """
+        SELECT batter AS player,
+               SUM(batter_runs) AS runs,
+               SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END) AS balls,
+               SUM(CASE WHEN batter_runs = 4 THEN 1 ELSE 0 END) AS fours,
+               SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END) AS sixes,
+               SUM(CASE WHEN is_wicket = 1 AND player_out = batter AND LOWER(COALESCE(wicket_kind, '')) NOT IN ('retired hurt', 'retired out', 'obstructing the field') THEN 1 ELSE 0 END) AS outs
+        FROM deliveries
+        WHERE season_id = ?
+        GROUP BY batter
+        """,
+        (season,),
+    ).fetchall()
+    by_player: list[dict[str, Any]] = []
+    for row in runs_rows:
+        runs = int(row["runs"] or 0)
+        balls = int(row["balls"] or 0)
+        outs = int(row["outs"] or 0)
+        by_player.append(
+            {
+                "player": str(row["player"]),
+                "runs": runs,
+                "balls": balls,
+                "fours": int(row["fours"] or 0),
+                "sixes": int(row["sixes"] or 0),
+                "strike_rate": round((runs * 100.0 / balls), 2) if balls else None,
+                "average": round((runs / outs), 2) if outs else None,
+            }
+        )
+
+    wickets_rows = conn.execute(
+        f"""
+        SELECT bowler AS player,
+               SUM(total_runs - bye_runs - leg_bye_runs) AS runs_conceded,
+               SUM(legal_ball) AS legal_balls,
+               SUM(CASE WHEN is_wicket = 1 AND LOWER(COALESCE(wicket_kind, '')) NOT IN ({placeholders}) THEN 1 ELSE 0 END) AS wickets
+        FROM deliveries
+        WHERE season_id = ?
+        GROUP BY bowler
+        """,
+        non_bowler + (season,),
+    ).fetchall()
+    bowlers: list[dict[str, Any]] = []
+    for row in wickets_rows:
+        wickets = int(row["wickets"] or 0)
+        legal_balls = int(row["legal_balls"] or 0)
+        runs_conceded = int(row["runs_conceded"] or 0)
+        bowlers.append(
+            {
+                "player": str(row["player"]),
+                "wickets": wickets,
+                "runs_conceded": runs_conceded,
+                "legal_balls": legal_balls,
+                "economy": round((runs_conceded * 6.0 / legal_balls), 2) if legal_balls else None,
+                "bowling_average": round((runs_conceded / wickets), 2) if wickets else None,
+                "bowling_strike_rate": round((legal_balls / wickets), 2) if wickets else None,
+            }
+        )
+
+    player_scores = conn.execute(
+        """
+        SELECT batter AS player, match_id, innings, SUM(batter_runs) AS runs
+        FROM deliveries
+        WHERE season_id = ?
+        GROUP BY batter, match_id, innings
+        """,
+        (season,),
+    ).fetchall()
+    highest_score: dict[str, int] = {}
+    for row in player_scores:
+        player = str(row["player"])
+        score = int(row["runs"] or 0)
+        highest_score[player] = max(score, highest_score.get(player, 0))
+
+    def _top(items: list[dict[str, Any]], metric: str, *, descending: bool = True, require: Any = None) -> list[dict[str, Any]]:
+        selected = [item for item in items if require(item)] if require else list(items)
+        ordered = sorted(
+            selected,
+            key=lambda row: (
+                row.get(metric) is None,
+                -(float(row.get(metric) or 0.0)) if descending else float(row.get(metric) or 0.0),
+                str(row.get("player", "")),
+            ),
+        )
+        return [{"player": row["player"], "value": row.get(metric)} for row in ordered[:safe_limit]]
+
+    strike_rate_qualifier = lambda row: int(row.get("balls") or 0) >= 120 and row.get("strike_rate") is not None
+    economy_qualifier = lambda row: int(row.get("legal_balls") or 0) >= 120 and row.get("economy") is not None
+
+    highest_score_rows = sorted(
+        [{"player": p, "value": v} for p, v in highest_score.items()],
+        key=lambda row: (-int(row["value"]), row["player"]),
+    )[:safe_limit]
+
+    return {
+        "season_id": season,
+        "qualification": {
+            "best_strike_rate": "minimum 120 balls faced",
+            "best_economy": "minimum 120 legal balls bowled",
+        },
+        "leaderboards": {
+            "orange_cap_runs": _top(by_player, "runs"),
+            "purple_cap_wickets": _top(bowlers, "wickets"),
+            "most_sixes": _top(by_player, "sixes"),
+            "most_fours": _top(by_player, "fours"),
+            "highest_score": highest_score_rows,
+            "best_strike_rate": _top(by_player, "strike_rate", require=strike_rate_qualifier),
+            "best_economy": _top(bowlers, "economy", descending=False, require=economy_qualifier),
+        },
+    }
+
+
 def points_table(conn: sqlite3.Connection, season: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
@@ -487,22 +666,36 @@ def points_table(conn: sqlite3.Connection, season: int) -> list[dict[str, Any]]:
 
     nrr_rows = conn.execute(
         """
-        SELECT team,
-               SUM(runs_for) AS runs_for,
-               SUM(balls_for) AS balls_for,
-               SUM(runs_against) AS runs_against,
-               SUM(balls_against) AS balls_against
-        FROM (
-            SELECT i.team_batting AS team,
-                   i.runs AS runs_for,
-                   i.legal_balls AS balls_for,
-                   i2.runs AS runs_against,
-                   i2.legal_balls AS balls_against
+        WITH innings_nrr AS (
+            SELECT
+                i.season_id,
+                i.match_id,
+                i.innings,
+                i.team_batting AS team,
+                i.runs AS runs_for,
+                CASE
+                    WHEN i.wickets >= 10 AND i.legal_balls < 120 THEN 120
+                    ELSE i.legal_balls
+                END AS balls_for,
+                i2.runs AS runs_against,
+                CASE
+                    WHEN i2.wickets >= 10 AND i2.legal_balls < 120 THEN 120
+                    ELSE i2.legal_balls
+                END AS balls_against
             FROM innings_summary i
             JOIN innings_summary i2
-              ON i2.match_id = i.match_id AND i2.season_id = i.season_id AND i2.innings != i.innings
+              ON i2.match_id = i.match_id
+             AND i2.season_id = i.season_id
+             AND i2.innings != i.innings
             WHERE i.season_id = ?
-        ) x
+        )
+        SELECT
+            team,
+            SUM(runs_for) AS runs_for,
+            SUM(balls_for) AS balls_for,
+            SUM(runs_against) AS runs_against,
+            SUM(balls_against) AS balls_against
+        FROM innings_nrr
         GROUP BY team
         """,
         (season,),

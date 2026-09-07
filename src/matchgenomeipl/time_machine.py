@@ -15,6 +15,8 @@ from .ipl_knowledge import (
     list_fixtures,
     list_results,
     points_table,
+    season_leaderboards,
+    season_stats_overview,
     team_season_info,
     top_performers,
 )
@@ -444,6 +446,12 @@ class TimeMachineService:
 
     def get_top_performers(self, season_id: int | None = None, limit: int = 5) -> dict[str, Any]:
         return top_performers(self.conn, season=season_id, limit=limit)
+
+    def get_stats_overview(self, season_id: int) -> dict[str, Any]:
+        return season_stats_overview(self.conn, season=season_id)
+
+    def get_season_leaderboards(self, season_id: int, limit: int = 5) -> dict[str, Any]:
+        return season_leaderboards(self.conn, season=season_id, limit=limit)
 
     def _fetchall(self, operation: str, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         started = time.perf_counter()
