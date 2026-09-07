@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import ast
 import json
 import os
 import re
@@ -11,49 +12,58 @@ from urllib.request import Request, urlopen
 
 from .runtime_logging import log_sql
 
-ALLOWED_INTENTS = {
-    "PLAYER_SEASON_STAT",
-    "PLAYER_BEST_SEASON",
-    "PLAYER_PHASE_COMPARISON",
-    "MOST_SIXES_AGAINST_BOWLER",
-    "BOWLER_WICKETS_VS_TEAM",
-    "COMPARE_TWO_PLAYERS",
-    "RANKING_STAT",
-    "MATCH_PLAYER_OF_MATCH",
-    "MULTI_HOP_POM_RUNS_FINAL",
-}
-
-ALLOWED_METRICS = {
-    "runs",
-    "sixes",
-    "wickets",
-    "strike_rate",
-    "economy",
-}
-
 READONLY_BLOCKLIST = re.compile(
-    r"\b(insert|update|delete|drop|alter|attach|pragma|vacuum|create|replace)\b",
+    r"\b(insert|update|delete|drop|alter|attach|pragma|vacuum|create|replace|reindex|analyze)\b",
     re.IGNORECASE,
 )
+
+MAX_LIMIT = 25
+ALLOWED_OPERATIONS = {
+    "aggregate",
+    "lookup",
+    "rank",
+    "compare",
+    "trend",
+    "distribution",
+    "clarify",
+}
+
+
+@dataclass(frozen=True)
+class MetricDefinition:
+    name: str
+    aliases: tuple[str, ...]
+    entity_scopes: tuple[str, ...]
+    unit: str
+    description: str
 
 
 @dataclass(frozen=True)
 class QueryPlan:
     question: str
-    intent: str
-    entities: dict[str, Any]
+    operation: str
+    entity: str
+    entities: dict[str, Any] = field(default_factory=dict)
     metric: str | None = None
-    aggregation: str | None = None
-    scope: str | None = None
+    metrics: list[str] | None = None
+    filters: dict[str, Any] = field(default_factory=dict)
     group_by: list[str] | None = None
     order_by: str | None = None
     limit: int | None = None
-    evidence_required: bool = True
+    threshold: dict[str, Any] | None = None
 
 
 @dataclass
 class ConversationContext:
     last_plan: QueryPlan | None = None
+    last_entities: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class EntityResolution:
+    value: str | None
+    candidates: list[str]
+    ambiguous: bool
 
 
 class AskPlanProvider(Protocol):
@@ -64,123 +74,343 @@ class AskPlanProvider(Protocol):
 class SemanticResolver:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
-        self.players = [str(r["player_name"]) for r in conn.execute("SELECT player_name FROM players ORDER BY player_name").fetchall()]
-        self.players_lower = {p.lower(): p for p in self.players}
-
-        self.player_aliases = {
-            "dhoni": "MS Dhoni",
-            "msd": "MS Dhoni",
-            "mahi": "MS Dhoni",
-            "virat": "V Kohli",
-            "kohli": "V Kohli",
-            "king kohli": "V Kohli",
-            "rohit": "RG Sharma",
-            "hitman": "RG Sharma",
-            "bumrah": "JJ Bumrah",
-            "jasprit": "JJ Bumrah",
+        self.metric_registry = self._build_metric_registry()
+        self.player_aliases = self._build_player_aliases()
+        self.team_aliases = self._build_team_aliases()
+        self.player_activity = self._build_player_activity()
+        self.player_name_hints = {
+            "virat": "kohli",
+            "rohit": "sharma",
+            "jasprit": "bumrah",
+            "bumrah": "bumrah",
+            "dhoni": "dhoni",
+            "mahi": "dhoni",
+            "msd": "dhoni",
         }
 
-        self.metric_map = {
-            "six": "sixes",
-            "sixes": "sixes",
-            "maximum": "sixes",
-            "maximums": "sixes",
-            "run": "runs",
-            "runs": "runs",
-            "strike rate": "strike_rate",
-            "sr": "strike_rate",
-            "wicket": "wickets",
-            "wickets": "wickets",
-            "economy": "economy",
-            "eco": "economy",
-        }
+    def _build_metric_registry(self) -> dict[str, MetricDefinition]:
+        defs = [
+            MetricDefinition("runs", ("run", "runs", "scored"), ("batting",), "runs", "Total batter runs."),
+            MetricDefinition("balls", ("ball", "balls"), ("batting", "bowling"), "balls", "Balls faced/bowled."),
+            MetricDefinition("fours", ("four", "fours", "boundaries"), ("batting",), "count", "Fours hit by batter."),
+            MetricDefinition("sixes", ("six", "sixes", "maximum", "maximums"), ("batting",), "count", "Sixes hit by batter."),
+            MetricDefinition("dot_balls", ("dot", "dots", "dot balls", "dot-ball"), ("batting", "bowling"), "count", "Dot balls."),
+            MetricDefinition("dot_ball_pct", ("dot ball percentage", "dot percentage"), ("batting", "bowling"), "percent", "Dot-ball percentage."),
+            MetricDefinition("strike_rate", ("strike rate", "sr", "batting strike rate", "scoring rate", "run rate"), ("batting",), "runs/100 balls", "Batting strike rate."),
+            MetricDefinition("average", ("average", "batting average"), ("batting",), "runs/dismissal", "Batting average."),
+            MetricDefinition("wickets", ("wicket", "wickets"), ("bowling",), "count", "Wickets taken."),
+            MetricDefinition("runs_conceded", ("runs conceded", "conceded"), ("bowling",), "runs", "Runs conceded by bowler."),
+            MetricDefinition("legal_balls", ("legal balls", "valid balls"), ("bowling",), "balls", "Legal balls bowled."),
+            MetricDefinition("economy", ("economy", "economy rate", "econ"), ("bowling",), "runs/over", "Bowling economy."),
+            MetricDefinition("bowling_strike_rate", ("bowling strike rate",), ("bowling",), "balls/wicket", "Balls per wicket."),
+            MetricDefinition("run_rate", ("team run rate", "innings run rate", "run rate"), ("team", "innings"), "runs/over", "Team/innings run rate."),
+            MetricDefinition("player_of_match", ("player of the match", "man of the match"), ("match",), "text", "Player of the match lookup."),
+        ]
+        return {d.name: d for d in defs}
 
-        team_rows = conn.execute(
-            "SELECT DISTINCT historical_display_name FROM match_team_map WHERE historical_display_name IS NOT NULL ORDER BY historical_display_name"
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        lowered = text.lower().replace("\u2019", "'")
+        lowered = re.sub(r"\b([a-z]+)'s\b", r"\1", lowered)
+        lowered = re.sub(r"[^a-z0-9\s.]", " ", lowered)
+        lowered = re.sub(r"\s+", " ", lowered).strip()
+        return lowered
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        return [t for t in re.split(r"\s+", SemanticResolver._normalize_text(text)) if t]
+
+    def _build_player_aliases(self) -> dict[str, list[str]]:
+        rows = self.conn.execute("SELECT player_name FROM players ORDER BY player_name").fetchall()
+        alias_map: dict[str, list[str]] = {}
+
+        def normalize_player_name(raw: str) -> str | None:
+            value = raw.strip()
+            if not value:
+                return None
+            if value.startswith("[") and value.endswith("]"):
+                try:
+                    parsed = ast.literal_eval(value)
+                except Exception:
+                    return None
+                if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], str):
+                    value = parsed[0].strip()
+                else:
+                    return None
+            if "'," in value or value.startswith("["):
+                return None
+            return value
+
+        def add(alias: str, player: str) -> None:
+            key = self._normalize_text(alias)
+            if not key:
+                return
+            bucket = alias_map.setdefault(key, [])
+            if player not in bucket:
+                bucket.append(player)
+
+        for row in rows:
+            maybe_player = normalize_player_name(str(row["player_name"]))
+            if maybe_player is None:
+                continue
+            player = maybe_player
+            tokens = self._tokenize(player)
+            if not tokens:
+                continue
+            first = tokens[0]
+            surname = tokens[-1]
+            add(" ".join(tokens), player)
+            add("".join(tokens), player)
+            add(surname, player)
+            if len(first) >= 3:
+                add(first, player)
+            add(f"{first} {surname}", player)
+            add(f"{first[0]} {surname}", player)
+            add(f"{first[0]}. {surname}", player)
+            if len(first) <= 3 and first.isalpha():
+                add(f"{first[0]} {surname}", player)
+                if len(first) >= 2:
+                    add(f"{first}{surname[0]}", player)
+        return alias_map
+
+    def _build_team_aliases(self) -> dict[str, str]:
+        aliases: dict[str, str] = {}
+        rows = self.conn.execute(
+            "SELECT DISTINCT historical_display_name FROM match_team_map WHERE historical_display_name IS NOT NULL"
         ).fetchall()
-        teams = [str(r["historical_display_name"]) for r in team_rows]
-        self.team_alias = {t.lower(): t for t in teams}
-        self.team_alias.update({
-            "csk": "Chennai Super Kings",
-            "mi": "Mumbai Indians",
-            "rcb": "Royal Challengers Bangalore",
-            "srh": "Sunrisers Hyderabad",
-            "kkr": "Kolkata Knight Riders",
-            "rr": "Rajasthan Royals",
-            "dc": "Delhi Capitals",
-            "pbks": "Punjab Kings",
-            "kxip": "Kings XI Punjab",
-            "gt": "Gujarat Titans",
-            "lsg": "Lucknow Super Giants",
-        })
+        for row in rows:
+            team = str(row["historical_display_name"])
+            key = self._normalize_text(team)
+            aliases[key] = team
+            acronym = "".join(word[0] for word in key.split() if word)
+            if len(acronym) >= 2:
+                aliases[acronym] = team
+
+        try:
+            rows = self.conn.execute(
+                "SELECT alias_name, current_canonical_name FROM team_alias ta JOIN team_identity ti ON ti.team_identity_id = ta.team_identity_id"
+            ).fetchall()
+            for row in rows:
+                alias_name = str(row["alias_name"])
+                canonical = str(row["current_canonical_name"] or alias_name)
+                aliases[self._normalize_text(alias_name)] = canonical
+        except sqlite3.Error:
+            pass
+
+        return aliases
+
+    def _build_player_activity(self) -> dict[str, int]:
+        activity: dict[str, int] = {}
+        rows = self.conn.execute(
+            "SELECT batter AS player, COUNT(*) AS appearances FROM deliveries GROUP BY batter"
+        ).fetchall()
+        for row in rows:
+            activity[str(row["player"])] = int(row["appearances"])
+
+        rows = self.conn.execute(
+            "SELECT bowler AS player, COUNT(*) AS appearances FROM deliveries GROUP BY bowler"
+        ).fetchall()
+        for row in rows:
+            player = str(row["player"])
+            activity[player] = activity.get(player, 0) + int(row["appearances"])
+        return activity
 
     def extract_season(self, text: str) -> int | None:
-        match = re.search(r"\b(20\d{2})\b", text)
-        return int(match.group(1)) if match else None
+        m = re.search(r"\b(20\d{2})\b", self._normalize_text(text))
+        return int(m.group(1)) if m else None
 
-    def extract_limit(self, text: str) -> int:
-        m = re.search(r"\btop\s+(\d{1,2})\b", text)
-        if m:
-            return max(1, min(25, int(m.group(1))))
-        return 10
+    def extract_season_range(self, text: str) -> tuple[int, int] | None:
+        normalized = self._normalize_text(text)
+        m = re.search(r"\bfrom\s+(20\d{2})\s+to\s+(20\d{2})\b", normalized)
+        if not m:
+            m = re.search(r"\b(20\d{2})\s*[-/]\s*(20\d{2})\b", normalized)
+        if not m:
+            return None
+        start = int(m.group(1))
+        end = int(m.group(2))
+        return (start, end) if start <= end else (end, start)
 
     def extract_phase(self, text: str) -> str | None:
-        lowered = text.lower()
+        lowered = self._normalize_text(text)
         if "powerplay" in lowered:
             return "powerplay"
-        if "middle" in lowered:
-            return "middle"
         if "death" in lowered:
             return "death"
+        if "middle" in lowered:
+            return "middle"
         return None
 
-    def resolve_metric(self, text: str) -> str | None:
-        lowered = text.lower()
-        for key, value in self.metric_map.items():
-            if key in lowered:
-                return value
+    def extract_limit(self, text: str, default: int = 10) -> int:
+        lowered = self._normalize_text(text)
+        m = re.search(r"\b(top|bottom)\s+(\d{1,2})\b", lowered)
+        if m:
+            return max(1, min(MAX_LIMIT, int(m.group(2))))
+        return default
+
+    def extract_bowling_type(self, text: str) -> str | None:
+        lowered = self._normalize_text(text)
+        if "left arm pace" in lowered or "left-arm pace" in lowered:
+            return "left-arm pace"
+        if "left arm spin" in lowered or "left-arm spin" in lowered:
+            return "left-arm spin"
+        if "right arm pace" in lowered or "right-arm pace" in lowered:
+            return "right-arm pace"
+        if "right arm spin" in lowered or "right-arm spin" in lowered:
+            return "right-arm spin"
         return None
 
-    def resolve_players_from_text(self, text: str) -> list[str]:
-        lowered = text.lower()
+    def resolve_metrics(self, text: str, has_player_context: bool) -> list[str]:
+        lowered = self._normalize_text(text)
         found: list[str] = []
 
-        for alias, mapped in self.player_aliases.items():
-            if re.search(rf"\b{re.escape(alias)}\b", lowered):
-                if mapped in self.players:
-                    found.append(mapped)
+        # Phrase-level disambiguation first to avoid "run" token overriding "run rate" intent.
+        if "run rate" in lowered or "scoring rate" in lowered:
+            found.append("strike_rate" if has_player_context else "run_rate")
 
-        for player in self.players:
-            p = player.lower()
-            if p in lowered or p.replace(" ", "") in lowered:
-                found.append(player)
+        for name, definition in self.metric_registry.items():
+            for alias in definition.aliases:
+                if re.search(rf"\b{re.escape(alias)}\b", lowered):
+                    if name == "run_rate":
+                        if has_player_context:
+                            found.append("strike_rate")
+                        else:
+                            found.append("run_rate")
+                    else:
+                        found.append(name)
+                    break
+
+        if not found and "run rate" in lowered and has_player_context:
+            found.append("strike_rate")
 
         dedup: list[str] = []
-        for name in found:
-            if name not in dedup:
-                dedup.append(name)
+        for metric in found:
+            if metric not in dedup:
+                dedup.append(metric)
+
+        if ("run rate" in lowered or "scoring rate" in lowered) and "strike_rate" in dedup and len(dedup) > 1:
+            dedup = [m for m in dedup if m != "runs"]
         return dedup
 
-    def resolve_player(self, text: str) -> str | None:
-        players = self.resolve_players_from_text(text)
-        if len(players) == 1:
-            return players[0]
-        return players[0] if players else None
+    def resolve_player_candidates(self, text: str) -> list[str]:
+        lowered = self._normalize_text(text)
+        tokens = lowered.split()
+        hits: list[str] = []
 
-    def resolve_team(self, text: str) -> str | None:
-        lowered = text.lower()
-        for alias, canonical in self.team_alias.items():
+        for width in (3, 2, 1):
+            for i in range(len(tokens) - width + 1):
+                alias = " ".join(tokens[i : i + width])
+                for player in self.player_aliases.get(alias, []):
+                    if player not in hits:
+                        hits.append(player)
+
+        # Full name fallback: "virat kohli" -> players with surname "kohli" and first initial "v"
+        for i in range(len(tokens) - 1):
+            first_token = tokens[i]
+            surname = tokens[i + 1]
+            surname_matches = self.player_aliases.get(surname, [])
+            if len(surname_matches) > 1 and first_token:
+                initial = first_token[0]
+                filtered = [p for p in surname_matches if self._tokenize(p)[0].startswith(initial)]
+                if filtered:
+                    for player in filtered:
+                        if player not in hits:
+                            hits.append(player)
+
+        return hits
+
+    def resolve_player(self, text: str) -> EntityResolution:
+        lowered = self._normalize_text(text)
+        tokens = lowered.split()
+
+        for token in tokens:
+            hinted_surname = self.player_name_hints.get(token)
+            if hinted_surname is None:
+                continue
+            hinted_candidates = self.player_aliases.get(hinted_surname, [])
+            if not hinted_candidates:
+                continue
+            ranked_hint = sorted(hinted_candidates, key=lambda p: self.player_activity.get(p, 0), reverse=True)
+            return EntityResolution(ranked_hint[0], ranked_hint[:6], False)
+
+        # Prefer explicit "firstname surname" -> first-initial + surname resolution when unique.
+        for i in range(len(tokens) - 1):
+            first_token = tokens[i]
+            surname = tokens[i + 1]
+            surname_matches = self.player_aliases.get(surname, [])
+            if len(surname_matches) > 1 and first_token:
+                initial = first_token[0]
+                filtered = [p for p in surname_matches if self._tokenize(p)[0].startswith(initial)]
+                if len(filtered) == 1:
+                    return EntityResolution(filtered[0], filtered, False)
+
+        candidates = self.resolve_player_candidates(text)
+        if not candidates:
+            # Possessive-name fallback: "Rohit's" -> dominant player for initial "r" when reliable.
+            possessive_tokens = [m.group(1).lower() for m in re.finditer(r"\b([A-Za-z]{4,})'s\b", text)]
+            for token in possessive_tokens:
+                initial = token[0]
+                initial_candidates = [
+                    p for p in self.player_activity.keys() if self._tokenize(p) and self._tokenize(p)[0].startswith(initial)
+                ]
+                if len(initial_candidates) < 2:
+                    continue
+                ranked_initial = sorted(initial_candidates, key=lambda p: self.player_activity.get(p, 0), reverse=True)
+                best = self.player_activity.get(ranked_initial[0], 0)
+                next_best = self.player_activity.get(ranked_initial[1], 0)
+                if best >= 500 and best >= (next_best * 2):
+                    return EntityResolution(ranked_initial[0], ranked_initial[:6], False)
+            return EntityResolution(None, [], False)
+        if len(candidates) == 1:
+            return EntityResolution(candidates[0], candidates, False)
+
+        ranked = sorted(candidates, key=lambda p: self.player_activity.get(p, 0), reverse=True)
+        if len(ranked) >= 2:
+            best = self.player_activity.get(ranked[0], 0)
+            next_best = self.player_activity.get(ranked[1], 0)
+            if best >= 100 and best >= (next_best * 2):
+                return EntityResolution(ranked[0], ranked, False)
+        return EntityResolution(None, candidates[:6], True)
+
+    def resolve_team(self, text: str) -> EntityResolution:
+        lowered = self._normalize_text(text)
+        hits: list[str] = []
+        for alias, canonical in self.team_aliases.items():
             if re.search(rf"\b{re.escape(alias)}\b", lowered):
-                return canonical
-        return None
+                if canonical not in hits:
+                    hits.append(canonical)
+        if not hits:
+            return EntityResolution(None, [], False)
+        if len(hits) == 1:
+            return EntityResolution(hits[0], hits, False)
+        return EntityResolution(None, hits[:6], True)
 
 
 class RuleBasedPlanProvider:
+    def _apply_follow_up_context(self, question: str, plan_entities: dict[str, Any], context: ConversationContext) -> None:
+        lowered = SemanticResolver._normalize_text(question)
+        if context.last_plan is None:
+            return
+
+        uses_pronoun = bool(re.search(r"\b(his|her|their|them|that season|that year)\b", lowered))
+        if not uses_pronoun:
+            return
+
+        for key in ("player", "players", "team", "season", "season_start", "season_end"):
+            if key not in plan_entities and key in context.last_entities:
+                plan_entities[key] = context.last_entities[key]
+            elif key not in plan_entities and key in context.last_plan.entities:
+                plan_entities[key] = context.last_plan.entities[key]
+
     def build_plan(self, question: str, semantic: SemanticResolver, context: ConversationContext) -> QueryPlan | None:
         raw = question.strip()
-        lowered = raw.lower()
+        lowered = SemanticResolver._normalize_text(raw)
+        if not raw:
+            return None
 
-        # Follow-up continuation: "What about 2015?"
+        if any(token in lowered for token in ("weather", "pitch moisture", "humidity", "temperature")):
+            return None
+
+        # Lightweight follow-up season carry-forward: "What about 2015?"
         if lowered.startswith("what about") and context.last_plan is not None:
             season = semantic.extract_season(lowered)
             if season is not None:
@@ -188,140 +418,196 @@ class RuleBasedPlanProvider:
                 entities["season"] = season
                 return QueryPlan(
                     question=raw,
-                    intent=context.last_plan.intent,
+                    operation=context.last_plan.operation,
+                    entity=context.last_plan.entity,
                     entities=entities,
                     metric=context.last_plan.metric,
-                    aggregation=context.last_plan.aggregation,
-                    scope=context.last_plan.scope,
+                    metrics=context.last_plan.metrics,
+                    filters=dict(context.last_plan.filters),
                     group_by=context.last_plan.group_by,
                     order_by=context.last_plan.order_by,
                     limit=context.last_plan.limit,
+                    threshold=context.last_plan.threshold,
                 )
 
         season = semantic.extract_season(lowered)
-        metric = semantic.resolve_metric(lowered)
+        season_range = semantic.extract_season_range(lowered)
         phase = semantic.extract_phase(lowered)
-        players = semantic.resolve_players_from_text(lowered)
-        player = players[0] if players else None
 
-        # Lightweight conversational carry-forward for pronoun follow-ups.
-        if player is None and context.last_plan is not None and re.search(r"\b(his|her|their)\b", lowered):
-            last_player = context.last_plan.entities.get("player")
-            if isinstance(last_player, str) and last_player:
-                player = last_player
+        all_players = semantic.resolve_player_candidates(raw)
+        player_resolution = semantic.resolve_player(raw)
+        team_resolution = semantic.resolve_team(lowered)
 
-        if not players and context.last_plan is not None and re.search(r"\b(his|her|their)\b", lowered):
-            last_players = context.last_plan.entities.get("players")
-            if isinstance(last_players, list):
-                players = [str(x) for x in last_players if str(x)]
+        entities: dict[str, Any] = {}
+        if season is not None:
+            entities["season"] = season
+        if season_range is not None:
+            entities["season_start"] = season_range[0]
+            entities["season_end"] = season_range[1]
+        if phase is not None:
+            entities["phase"] = phase
 
-        if ("man of the match" in lowered or "player of the match" in lowered) and "how many runs" in lowered and "final" in lowered:
-            if season is None:
+        if team_resolution.ambiguous:
+            return QueryPlan(
+                question=raw,
+                operation="clarify",
+                entity="team",
+                entities={"candidates": team_resolution.candidates, "reason": "ambiguous_team"},
+            )
+
+        if team_resolution.value:
+            entities["team"] = team_resolution.value
+
+        if len(all_players) >= 2 and ("compare" in lowered or "between" in lowered):
+            entities["players"] = all_players[:2]
+        elif player_resolution.ambiguous:
+            return QueryPlan(
+                question=raw,
+                operation="clarify",
+                entity="player",
+                entities={"candidates": player_resolution.candidates, "reason": "ambiguous_player"},
+            )
+        elif player_resolution.value:
+            entities["player"] = player_resolution.value
+
+        self._apply_follow_up_context(raw, entities, context)
+
+        has_player_context = "player" in entities or "players" in entities
+        metrics = semantic.resolve_metrics(lowered, has_player_context=has_player_context)
+        primary_metric = metrics[0] if metrics else None
+
+        if "player of the match" in lowered or "man of the match" in lowered:
+            if "final" in lowered:
+                entities["match_type"] = "final"
+            return QueryPlan(
+                question=raw,
+                operation="lookup",
+                entity="match_metadata",
+                entities=entities,
+                metric="player_of_match",
+                metrics=["player_of_match"],
+                filters=dict(entities),
+                limit=1,
+            )
+
+        if "last three matches" in lowered or "last 3 matches" in lowered:
+            if "player" not in entities:
                 return None
             return QueryPlan(
                 question=raw,
-                intent="MULTI_HOP_POM_RUNS_FINAL",
-                entities={"season": season},
-                metric="runs",
-                aggregation="lookup",
-                scope="match",
+                operation="trend",
+                entity="player_recent_matches",
+                entities=entities,
+                metric=primary_metric or "runs",
+                metrics=metrics or ["runs", "strike_rate"],
+                filters=dict(entities),
+                limit=3,
             )
 
-        if "who hit more" in lowered or ("compare" in lowered and metric in {"sixes", "runs", "strike_rate", "wickets", "economy"}):
-            if len(players) >= 2:
-                return QueryPlan(
-                    question=raw,
-                    intent="COMPARE_TWO_PLAYERS",
-                    entities={"players": players[:2], "season": season, "phase": phase},
-                    metric=metric or "runs",
-                    aggregation="compare",
-                    scope="batting" if (metric or "runs") in {"runs", "sixes", "strike_rate"} else "bowling",
-                )
-
-        if ("top" in lowered or "most" in lowered or "highest" in lowered) and season is not None and metric in {"sixes", "runs", "wickets", "strike_rate"}:
+        bowling_type = semantic.extract_bowling_type(lowered)
+        if bowling_type and "player" in entities:
+            entities["bowling_type"] = bowling_type
             return QueryPlan(
                 question=raw,
-                intent="RANKING_STAT",
-                entities={"season": season, "phase": phase},
-                metric=metric,
-                aggregation="rank",
-                scope="batting" if metric in {"runs", "sixes", "strike_rate"} else "bowling",
+                operation="aggregate",
+                entity="player_vs_bowling_type",
+                entities=entities,
+                metric=primary_metric or "strike_rate",
+                metrics=metrics or [primary_metric or "strike_rate"],
+                filters=dict(entities),
+            )
+
+        if "compare" in lowered and "players" not in entities and "player" in entities and context.last_entities.get("player"):
+            entities["players"] = [str(context.last_entities["player"]), str(entities["player"])]
+
+        if "compare" in lowered and "players" in entities:
+            return QueryPlan(
+                question=raw,
+                operation="compare",
+                entity="player_comparison",
+                entities=entities,
+                metric=primary_metric or "runs",
+                metrics=metrics or [primary_metric or "runs"],
+                filters=dict(entities),
+            )
+
+        if any(word in lowered for word in ("top", "most", "highest", "best", "lowest", "bottom")):
+            is_best_season = ("best season" in lowered) or ("best" in lowered and "season" in lowered)
+            limit = semantic.extract_limit(lowered, default=1 if is_best_season else 10)
+            order = "asc" if any(word in lowered for word in ("lowest", "bottom", "best economy")) else "desc"
+            group_by = ["season"] if is_best_season and "player" in entities else ["player"]
+            threshold: dict[str, Any] | None = None
+            threshold_match = re.search(r"more than\s+(\d+)\s+runs", lowered)
+            if threshold_match:
+                threshold = {"metric": "runs", "op": ">", "value": int(threshold_match.group(1))}
+            return QueryPlan(
+                question=raw,
+                operation="rank",
+                entity="bowling" if (primary_metric in {"wickets", "economy", "runs_conceded", "bowling_strike_rate"}) else "batting",
+                entities=entities,
+                metric=primary_metric or "runs",
+                metrics=metrics or [primary_metric or "runs"],
+                filters=dict(entities),
+                group_by=group_by,
+                order_by=order,
+                limit=limit,
+                threshold=threshold,
+            )
+
+        if "team" in entities and ((primary_metric in {"wickets", "economy", "bowling_strike_rate", "runs_conceded"}) or ("player" in entities and primary_metric is None)):
+            if "player" in entities:
+                entities["bowler"] = entities.pop("player")
+            return QueryPlan(
+                question=raw,
+                operation="aggregate",
+                entity="bowler_vs_team",
+                entities=entities,
+                metric=primary_metric or "wickets",
+                metrics=metrics or [primary_metric or "wickets"],
+                filters=dict(entities),
+            )
+
+        if "player" in entities and primary_metric is not None:
+            return QueryPlan(
+                question=raw,
+                operation="aggregate",
+                entity="player",
+                entities=entities,
+                metric=primary_metric,
+                metrics=metrics,
+                filters=dict(entities),
+            )
+
+        if "player" in entities and phase is not None and primary_metric is None:
+            return QueryPlan(
+                question=raw,
+                operation="aggregate",
+                entity="player",
+                entities=entities,
+                metric="runs",
+                metrics=["runs", "strike_rate"],
+                filters=dict(entities),
+            )
+
+        if season is not None and primary_metric is not None:
+            return QueryPlan(
+                question=raw,
+                operation="rank",
+                entity="bowling" if primary_metric in {"wickets", "economy", "runs_conceded", "bowling_strike_rate"} else "batting",
+                entities=entities,
+                metric=primary_metric,
+                metrics=metrics or [primary_metric],
+                filters=dict(entities),
+                group_by=["player"],
                 order_by="desc",
                 limit=semantic.extract_limit(lowered),
-            )
-
-        if "most sixes" in lowered and "against" in lowered:
-            bowler = semantic.resolve_player(lowered.split("against", 1)[1]) if "against" in lowered else None
-            if bowler:
-                return QueryPlan(
-                    question=raw,
-                    intent="MOST_SIXES_AGAINST_BOWLER",
-                    entities={"bowler": bowler, "season": season},
-                    metric="sixes",
-                    aggregation="max",
-                    scope="batting",
-                )
-
-        if metric == "wickets" and "against" in lowered and player:
-            team = semantic.resolve_team(lowered.split("against", 1)[1])
-            if team:
-                return QueryPlan(
-                    question=raw,
-                    intent="BOWLER_WICKETS_VS_TEAM",
-                    entities={"bowler": player, "team": team, "season": season},
-                    metric="wickets",
-                    aggregation="sum",
-                    scope="bowling",
-                )
-
-        if "best season" in lowered and player:
-            return QueryPlan(
-                question=raw,
-                intent="PLAYER_BEST_SEASON",
-                entities={"player": player},
-                metric="runs",
-                aggregation="max",
-                scope="batting",
-            )
-
-        if "compare" in lowered and phase and len(players) >= 2:
-            return QueryPlan(
-                question=raw,
-                intent="PLAYER_PHASE_COMPARISON",
-                entities={"players": players[:2], "season": season, "phase": phase},
-                metric="strike_rate",
-                aggregation="compare",
-                scope="phase",
-            )
-
-        if ("man of the match" in lowered or "player of the match" in lowered) and season is not None:
-            return QueryPlan(
-                question=raw,
-                intent="MATCH_PLAYER_OF_MATCH",
-                entities={"season": season, "stage": "final" if "final" in lowered else None},
-                metric="player_of_match",
-                aggregation="lookup",
-                scope="match_metadata",
-            )
-
-        if player and season is not None and metric in ALLOWED_METRICS:
-            return QueryPlan(
-                question=raw,
-                intent="PLAYER_SEASON_STAT",
-                entities={"player": player, "season": season, "phase": phase},
-                metric=metric,
-                aggregation="sum" if metric in {"runs", "sixes", "wickets"} else "rate",
-                scope="batting" if metric in {"runs", "sixes", "strike_rate"} else "bowling",
             )
 
         return None
 
 
 class LlmAskPlanProvider:
-    """Optional LLM provider that returns strict JSON query plans.
-
-    This provider never executes SQL. It only proposes structured plans, which are validated.
-    """
+    """Optional provider that returns structured plans only; SQL is never model-generated."""
 
     def __init__(self) -> None:
         self.provider = os.getenv("MATCHGENOME_LLM_PROVIDER", "openai_compatible").strip().lower()
@@ -344,25 +630,15 @@ class LlmAskPlanProvider:
             "temperature": 0,
             "response_format": {"type": "json_object"},
         }
-
-        url = self.base_url.rstrip("/") + "/v1/chat/completions"
         req = Request(
-            url,
+            self.base_url.rstrip("/") + "/v1/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
             method="POST",
         )
-
         with urlopen(req, timeout=self.timeout_seconds) as resp:
             body = json.loads(resp.read().decode("utf-8"))
-        return (
-            body.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-        )
+        return body.get("choices", [{}])[0].get("message", {}).get("content", "")
 
     def _post_anthropic_compatible(self, question: str, system_prompt: str) -> str:
         payload = {
@@ -372,10 +648,8 @@ class LlmAskPlanProvider:
             "temperature": 0,
             "max_tokens": 512,
         }
-
-        url = self.base_url.rstrip("/") + "/v1/messages"
         req = Request(
-            url,
+            self.base_url.rstrip("/") + "/v1/messages",
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
@@ -384,70 +658,81 @@ class LlmAskPlanProvider:
             },
             method="POST",
         )
-
         with urlopen(req, timeout=self.timeout_seconds) as resp:
             body = json.loads(resp.read().decode("utf-8"))
-
-        content_blocks = body.get("content", [])
-        if isinstance(content_blocks, list):
-            for block in content_blocks:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text = block.get("text")
-                    if isinstance(text, str):
-                        return text
+        for block in body.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
+                return block["text"]
         return ""
 
-    def _normalize_entities(self, entities: dict[str, Any], semantic: SemanticResolver) -> dict[str, Any]:
-        normalized: dict[str, Any] = {}
+    def _normalize_plan_dict(self, parsed: dict[str, Any], semantic: SemanticResolver) -> QueryPlan | None:
+        op = str(parsed.get("operation", "")).strip().lower()
+        entity = str(parsed.get("entity", "")).strip().lower()
+        if not op or not entity:
+            return None
 
-        def _to_int(value: Any) -> int | None:
+        entities_raw = parsed.get("entities", {})
+        entities = entities_raw if isinstance(entities_raw, dict) else {}
+
+        player = entities.get("player")
+        if isinstance(player, str):
+            r = semantic.resolve_player(player)
+            entities["player"] = r.value or player
+
+        players = entities.get("players")
+        if isinstance(players, list):
+            normalized_players: list[str] = []
+            for item in players:
+                if not isinstance(item, str):
+                    continue
+                r = semantic.resolve_player(item)
+                normalized_players.append(r.value or item)
+            entities["players"] = normalized_players
+
+        team = entities.get("team")
+        if isinstance(team, str):
+            t = semantic.resolve_team(team)
+            entities["team"] = t.value or team
+
+        season = entities.get("season")
+        if season is not None:
             try:
-                return int(str(value))
+                entities["season"] = int(str(season))
             except Exception:
-                return None
+                pass
 
-        for key, value in entities.items():
-            canonical_key = "season" if key == "year" else key
-            if canonical_key == "season":
-                season = _to_int(value)
-                if season is not None:
-                    normalized[canonical_key] = season
-            elif canonical_key in {"player", "batter", "bowler", "striker", "non_striker"} and isinstance(value, str):
-                resolved = semantic.resolve_player(value)
-                normalized[canonical_key] = resolved or value
-            elif canonical_key == "players" and isinstance(value, list):
-                out: list[str] = []
-                for item in value:
-                    if not isinstance(item, str):
-                        continue
-                    resolved = semantic.resolve_player(item)
-                    out.append(resolved or item)
-                if out:
-                    normalized[canonical_key] = out
-            elif canonical_key in {"team", "opponent"} and isinstance(value, str):
-                resolved_team = semantic.resolve_team(value)
-                normalized["team"] = resolved_team or value
-            elif canonical_key in {"phase", "stage"} and isinstance(value, str):
-                normalized[canonical_key] = value.strip().lower()
-            elif canonical_key == "limit":
-                limit = _to_int(value)
-                if limit is not None:
-                    normalized[canonical_key] = limit
-            else:
-                normalized[canonical_key] = value
+        metric = parsed.get("metric")
+        metrics = parsed.get("metrics")
+        metric_value = str(metric) if metric is not None else None
+        metrics_value: list[str] | None = None
+        if isinstance(metrics, list):
+            metrics_value = [str(m) for m in metrics if str(m)]
 
-        return normalized
+        return QueryPlan(
+            question=str(parsed.get("question") or ""),
+            operation=op,
+            entity=entity,
+            entities=entities,
+            metric=metric_value,
+            metrics=metrics_value,
+            filters=parsed.get("filters") if isinstance(parsed.get("filters"), dict) else dict(entities),
+            group_by=parsed.get("group_by") if isinstance(parsed.get("group_by"), list) else None,
+            order_by=str(parsed.get("order_by")) if parsed.get("order_by") is not None else None,
+            limit=int(parsed.get("limit")) if parsed.get("limit") is not None else None,
+            threshold=parsed.get("threshold") if isinstance(parsed.get("threshold"), dict) else None,
+        )
 
     def build_plan(self, question: str, semantic: SemanticResolver, context: ConversationContext) -> QueryPlan | None:
         if not self.enabled():
             return None
 
+        metric_names = ", ".join(sorted(semantic.metric_registry.keys()))
         system_prompt = (
-            "You convert IPL natural language questions into a strict JSON query plan. "
-            "Return JSON only with keys: intent, entities, metric, aggregation, scope, limit. "
-            "Use supported intents only: "
-            + ",".join(sorted(ALLOWED_INTENTS))
-            + "."
+            "Convert IPL analytics NL questions into JSON only with keys: "
+            "operation, entity, entities, metric, metrics, filters, group_by, order_by, limit, threshold. "
+            "Never output SQL. "
+            f"Allowed operations: {', '.join(sorted(ALLOWED_OPERATIONS))}. "
+            f"Known metrics: {metric_names}."
         )
 
         try:
@@ -466,27 +751,15 @@ class LlmAskPlanProvider:
         except Exception:
             return None
 
-        if "questions" in parsed and isinstance(parsed["questions"], list) and parsed["questions"]:
-            parsed = parsed["questions"][0]
+        if isinstance(parsed, dict) and "questions" in parsed and isinstance(parsed["questions"], list) and parsed["questions"]:
+            first = parsed["questions"][0]
+            if isinstance(first, dict):
+                parsed = first
 
         if not isinstance(parsed, dict):
             return None
-
-        intent = str(parsed.get("intent", "")).strip()
-        entities = parsed.get("entities", {})
-        if not isinstance(entities, dict):
-            entities = {}
-        entities = self._normalize_entities(entities, semantic)
-
-        return QueryPlan(
-            question=question,
-            intent=intent,
-            entities=entities,
-            metric=str(parsed.get("metric")) if parsed.get("metric") is not None else None,
-            aggregation=str(parsed.get("aggregation")) if parsed.get("aggregation") is not None else None,
-            scope=str(parsed.get("scope")) if parsed.get("scope") is not None else None,
-            limit=int(parsed.get("limit")) if parsed.get("limit") is not None else None,
-        )
+        parsed["question"] = question
+        return self._normalize_plan_dict(parsed, semantic)
 
 
 class CompositePlanProvider:
@@ -502,69 +775,94 @@ class CompositePlanProvider:
 
 
 class QueryPlanValidator:
+    def __init__(self, semantic: SemanticResolver) -> None:
+        self.semantic = semantic
+
     def validate(self, plan: QueryPlan) -> None:
-        if plan.intent not in ALLOWED_INTENTS:
-            raise ValueError("Unsupported intent")
-        if plan.metric is not None and plan.metric not in ALLOWED_METRICS and plan.metric != "player_of_match":
-            raise ValueError("Unsupported metric")
+        if plan.operation not in ALLOWED_OPERATIONS:
+            raise ValueError("Unsupported semantic operation")
+
+        if plan.limit is not None and (plan.limit < 1 or plan.limit > MAX_LIMIT):
+            raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
+
+        if plan.operation == "clarify":
+            return
+
+        metric_names = set(self.semantic.metric_registry.keys())
+        metrics = list(plan.metrics or [])
+        if plan.metric:
+            metrics.append(plan.metric)
+        for metric in metrics:
+            if metric not in metric_names:
+                raise ValueError(f"Unsupported metric: {metric}")
 
         entities = plan.entities
         if not isinstance(entities, dict):
             raise ValueError("entities must be an object")
 
-        def _require(keys: list[str]) -> None:
-            missing = [k for k in keys if k not in entities or entities[k] in (None, "")]
-            if missing:
-                raise ValueError(f"Missing required entities: {', '.join(missing)}")
-
-        allowed_entity_keys: dict[str, set[str]] = {
-            "PLAYER_SEASON_STAT": {"player", "season", "phase"},
-            "PLAYER_BEST_SEASON": {"player"},
-            "PLAYER_PHASE_COMPARISON": {"players", "season", "phase"},
-            "MOST_SIXES_AGAINST_BOWLER": {"bowler", "season"},
-            "BOWLER_WICKETS_VS_TEAM": {"bowler", "team", "season"},
-            "COMPARE_TWO_PLAYERS": {"players", "season", "phase"},
-            "RANKING_STAT": {"season", "phase"},
-            "MATCH_PLAYER_OF_MATCH": {"season", "stage"},
-            "MULTI_HOP_POM_RUNS_FINAL": {"season"},
-        }
-
-        extras = [k for k in entities if k not in allowed_entity_keys.get(plan.intent, set())]
-        if extras:
-            raise ValueError(f"Unsupported entity fields: {', '.join(sorted(extras))}")
-
-        if plan.limit is not None and (plan.limit < 1 or plan.limit > 25):
-            raise ValueError("limit must be between 1 and 25")
-
         season = entities.get("season")
         if season is not None and not isinstance(season, int):
             raise ValueError("season must be an integer")
 
-        if plan.intent == "PLAYER_SEASON_STAT":
-            _require(["player", "season"])
-        elif plan.intent == "PLAYER_BEST_SEASON":
-            _require(["player"])
-        elif plan.intent == "PLAYER_PHASE_COMPARISON":
-            _require(["players"])
-        elif plan.intent == "MOST_SIXES_AGAINST_BOWLER":
-            _require(["bowler"])
-        elif plan.intent == "BOWLER_WICKETS_VS_TEAM":
-            _require(["bowler", "team"])
-        elif plan.intent == "COMPARE_TWO_PLAYERS":
-            _require(["players"])
-            if not isinstance(entities.get("players"), list) or len(entities.get("players", [])) < 2:
-                raise ValueError("players list must have at least two values")
-        elif plan.intent == "RANKING_STAT":
-            _require(["season"])
-        elif plan.intent == "MATCH_PLAYER_OF_MATCH":
-            _require(["season"])
-        elif plan.intent == "MULTI_HOP_POM_RUNS_FINAL":
-            _require(["season"])
+        for key in ("season_start", "season_end"):
+            if key in entities and not isinstance(entities[key], int):
+                raise ValueError(f"{key} must be an integer")
+
+        if plan.operation == "compare":
+            players = entities.get("players")
+            if not isinstance(players, list) or len(players) < 2:
+                raise ValueError("compare requires at least two players")
+
+        if plan.operation == "aggregate" and plan.entity == "player" and "player" not in entities:
+            raise ValueError("player aggregate requires a resolved player")
 
 
 class QueryExecutor:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    TABLE_ALLOWLIST = {
+        "deliveries": {
+            "season_id",
+            "match_id",
+            "innings",
+            "over_number",
+            "ball_number",
+            "batter",
+            "bowler",
+            "non_striker",
+            "team_batting",
+            "team_bowling",
+            "batter_runs",
+            "total_runs",
+            "is_wicket",
+            "is_wide_ball",
+            "legal_ball",
+            "bye_runs",
+            "leg_bye_runs",
+            "bowler_type",
+            "wicket_kind",
+            "player_out",
+        },
+        "match_metadata": {
+            "match_id",
+            "season_id",
+            "match_date",
+            "venue",
+            "city",
+            "toss_winner",
+            "toss_decision",
+            "winner",
+            "result_type",
+            "result_margin",
+            "match_type",
+            "player_of_match",
+            "team_a_display",
+            "team_b_display",
+        },
+        "match_team_map": {"match_id", "internal_team_code", "historical_display_name"},
+    }
+
+    def __init__(self, conn: sqlite3.Connection, semantic: SemanticResolver) -> None:
         self.conn = conn
+        self.semantic = semantic
 
     def _safe_readonly(self, sql: str) -> None:
         stripped = sql.strip().lower()
@@ -573,6 +871,68 @@ class QueryExecutor:
         if READONLY_BLOCKLIST.search(stripped):
             raise ValueError("Blocked SQL keyword detected")
 
+    def _compile_select(
+        self,
+        *,
+        table: str,
+        select_columns: list[str],
+        where: list[tuple[str, str, Any]] | None = None,
+        group_by: list[str] | None = None,
+        having_sql: str | None = None,
+        order_by_sql: str | None = None,
+        limit: int | None = None,
+    ) -> tuple[str, tuple[Any, ...]]:
+        if table not in self.TABLE_ALLOWLIST:
+            raise ValueError("Unknown table")
+
+        allowed_cols = self.TABLE_ALLOWLIST[table]
+        for col in select_columns:
+            if col != "*" and col not in allowed_cols:
+                raise ValueError(f"Unknown column: {col}")
+
+        where = where or []
+        params: list[Any] = []
+        predicates: list[str] = []
+        for col, op, value in where:
+            if col not in allowed_cols:
+                raise ValueError(f"Unknown column: {col}")
+            if op not in {"=", ">", ">=", "<", "<=", "between"}:
+                raise ValueError("Unsafe expression operator")
+            if op == "between":
+                if not isinstance(value, tuple) or len(value) != 2:
+                    raise ValueError("between requires tuple(value1, value2)")
+                predicates.append(f"{col} BETWEEN ? AND ?")
+                params.extend([value[0], value[1]])
+            else:
+                predicates.append(f"{col} {op} ?")
+                params.append(value)
+
+        if group_by:
+            for col in group_by:
+                if col not in allowed_cols:
+                    raise ValueError(f"Unknown group_by column: {col}")
+
+        if limit is not None and (limit < 1 or limit > MAX_LIMIT):
+            raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
+
+        sql = f"SELECT {', '.join(select_columns)} FROM {table}"
+        if predicates:
+            sql += " WHERE " + " AND ".join(predicates)
+        if group_by:
+            sql += " GROUP BY " + ", ".join(group_by)
+        if having_sql:
+            if ";" in having_sql or "--" in having_sql:
+                raise ValueError("Unsafe expressions rejected")
+            sql += " HAVING " + having_sql
+        if order_by_sql:
+            if ";" in order_by_sql or "--" in order_by_sql:
+                raise ValueError("Unsafe expressions rejected")
+            sql += " ORDER BY " + order_by_sql
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return sql, tuple(params)
+
     def _run(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         self._safe_readonly(sql)
         started = time.perf_counter()
@@ -580,386 +940,495 @@ class QueryExecutor:
         log_sql("ask_query", sql, params, started, row_count=len(rows))
         return rows
 
-    def execute(self, plan: QueryPlan) -> dict[str, Any]:
-        if plan.intent == "PLAYER_SEASON_STAT":
-            return self._player_season_stat(plan)
-        if plan.intent == "PLAYER_BEST_SEASON":
-            return self._player_best_season(plan)
-        if plan.intent == "PLAYER_PHASE_COMPARISON":
-            return self._player_phase_comparison(plan)
-        if plan.intent == "MOST_SIXES_AGAINST_BOWLER":
-            return self._most_sixes_against_bowler(plan)
-        if plan.intent == "BOWLER_WICKETS_VS_TEAM":
-            return self._bowler_wickets_vs_team(plan)
-        if plan.intent == "COMPARE_TWO_PLAYERS":
-            return self._compare_two_players(plan)
-        if plan.intent == "RANKING_STAT":
-            return self._ranking_stat(plan)
-        if plan.intent == "MATCH_PLAYER_OF_MATCH":
-            return self._match_player_of_match(plan)
-        if plan.intent == "MULTI_HOP_POM_RUNS_FINAL":
-            return self._multi_hop_pom_runs_final(plan)
-        raise ValueError("Unsupported intent")
-
-    def _phase_filter(self, phase: str | None) -> str:
+    @staticmethod
+    def _phase_filter(phase: str | None) -> str:
         if phase == "powerplay":
-            return " AND over_number < 6"
+            return " AND d.over_number < 6"
         if phase == "middle":
-            return " AND over_number BETWEEN 6 AND 14"
+            return " AND d.over_number BETWEEN 6 AND 14"
         if phase == "death":
-            return " AND over_number >= 15"
+            return " AND d.over_number >= 15"
         return ""
 
-    def _player_season_stat(self, plan: QueryPlan) -> dict[str, Any]:
-        player = str(plan.entities["player"])
-        season = int(plan.entities["season"])
-        metric = str(plan.metric)
-        phase = plan.entities.get("phase")
-        phase_filter = self._phase_filter(str(phase) if phase else None)
+    def _build_batting_metrics_expr(self) -> dict[str, str]:
+        return {
+            "runs": "COALESCE(SUM(d.batter_runs), 0)",
+            "balls": "COALESCE(SUM(CASE WHEN d.is_wide_ball = 0 THEN 1 ELSE 0 END), 0)",
+            "fours": "COALESCE(SUM(CASE WHEN d.batter_runs = 4 THEN 1 ELSE 0 END), 0)",
+            "sixes": "COALESCE(SUM(CASE WHEN d.batter_runs = 6 THEN 1 ELSE 0 END), 0)",
+            "dot_balls": "COALESCE(SUM(CASE WHEN d.total_runs = 0 AND d.is_wide_ball = 0 THEN 1 ELSE 0 END), 0)",
+            "dismissals": "COALESCE(SUM(CASE WHEN d.is_wicket = 1 AND d.player_out = d.batter THEN 1 ELSE 0 END), 0)",
+        }
 
+    def _batting_metric_value(self, metric: str, base: dict[str, int]) -> float | int:
+        runs = base.get("runs", 0)
+        balls = base.get("balls", 0)
+        dismissals = base.get("dismissals", 0)
+        dots = base.get("dot_balls", 0)
+        if metric == "runs":
+            return runs
+        if metric == "balls":
+            return balls
+        if metric == "fours":
+            return base.get("fours", 0)
         if metric == "sixes":
-            row = self._run(
-                "SELECT COALESCE(SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END), 0) AS value FROM deliveries WHERE season_id = ? AND batter = ?" + phase_filter,
-                (season, player),
-            )[0]
-            value: Any = int(row["value"])
-        elif metric == "runs":
-            row = self._run(
-                "SELECT COALESCE(SUM(batter_runs), 0) AS value FROM deliveries WHERE season_id = ? AND batter = ?" + phase_filter,
-                (season, player),
-            )[0]
-            value = int(row["value"])
-        elif metric == "strike_rate":
-            row = self._run(
-                "SELECT COALESCE(SUM(batter_runs), 0) AS runs, COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls FROM deliveries WHERE season_id = ? AND batter = ?" + phase_filter,
-                (season, player),
-            )[0]
-            balls = int(row["balls"])
-            value = round((int(row["runs"]) * 100.0 / balls), 2) if balls else 0.0
-        elif metric == "wickets":
-            row = self._run(
-                "SELECT COALESCE(SUM(CASE WHEN is_wicket = 1 THEN 1 ELSE 0 END), 0) AS value FROM deliveries WHERE season_id = ? AND bowler = ?" + phase_filter,
-                (season, player),
-            )[0]
-            value = int(row["value"])
-        elif metric == "economy":
-            row = self._run(
-                "SELECT COALESCE(SUM(total_runs - bye_runs - leg_bye_runs), 0) AS runs, COALESCE(SUM(legal_ball), 0) AS balls FROM deliveries WHERE season_id = ? AND bowler = ?" + phase_filter,
-                (season, player),
-            )[0]
-            balls = int(row["balls"])
-            value = round(int(row["runs"]) / (balls / 6.0), 2) if balls else 0.0
-        else:
-            raise ValueError("Unsupported metric")
+            return base.get("sixes", 0)
+        if metric == "dot_balls":
+            return dots
+        if metric == "dot_ball_pct":
+            return round((dots * 100.0 / balls), 2) if balls else 0.0
+        if metric == "strike_rate":
+            return round((runs * 100.0 / balls), 2) if balls else 0.0
+        if metric == "average":
+            return round((runs / dismissals), 2) if dismissals else 0.0
+        return runs
 
-        return {
-            "value": value,
-            "label": f"{player} {metric.replace('_', ' ')} in IPL {season}",
-            "evidence": {
-                "source": "MatchGenome IPL database",
-                "scope": f"season={season}, player={player}" + (f", phase={phase}" if phase else ""),
-            },
-        }
-
-    def _player_best_season(self, plan: QueryPlan) -> dict[str, Any]:
+    def _aggregate_player(self, plan: QueryPlan) -> dict[str, Any]:
         player = str(plan.entities["player"])
-        row = self._run(
-            """
-            SELECT season_id,
-                   COALESCE(SUM(batter_runs), 0) AS runs,
-                   COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls
-            FROM deliveries
-            WHERE batter = ?
-            GROUP BY season_id
-            ORDER BY runs DESC, season_id ASC
-            LIMIT 1
-            """,
-            (player,),
-        )[0]
-        balls = int(row["balls"])
-        return {
-            "value": {
-                "season": int(row["season_id"]),
-                "runs": int(row["runs"]),
-                "strike_rate": round((int(row["runs"]) * 100.0 / balls), 2) if balls else 0.0,
-            },
-            "label": f"Best batting season for {player}",
-            "evidence": {"source": "MatchGenome IPL database", "scope": f"all seasons, player={player}"},
-        }
-
-    def _player_phase_comparison(self, plan: QueryPlan) -> dict[str, Any]:
-        players = [str(x) for x in plan.entities["players"][:2]]
         season = plan.entities.get("season")
         phase = plan.entities.get("phase")
+        season_range = (plan.entities.get("season_start"), plan.entities.get("season_end"))
 
-        value: list[dict[str, Any]] = []
-        for player in players:
-            sql = (
-                "SELECT CASE WHEN over_number < 6 THEN 'powerplay' WHEN over_number < 15 THEN 'middle' ELSE 'death' END AS phase, "
-                "COALESCE(SUM(batter_runs), 0) AS runs, COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls "
-                "FROM deliveries WHERE batter = ?"
-            )
-            params: tuple[Any, ...] = (player,)
-            if isinstance(season, int):
-                sql += " AND season_id = ?"
-                params += (season,)
-            sql += " GROUP BY phase ORDER BY CASE phase WHEN 'powerplay' THEN 1 WHEN 'middle' THEN 2 ELSE 3 END"
-            rows = self._run(sql, params)
-            if phase:
-                rows = [r for r in rows if str(r["phase"]) == str(phase)]
-            phases = []
-            for row in rows:
-                balls = int(row["balls"])
-                phases.append(
-                    {
-                        "phase": str(row["phase"]),
-                        "runs": int(row["runs"]),
-                        "balls": balls,
-                        "strike_rate": round((int(row["runs"]) * 100.0 / balls), 2) if balls else 0.0,
-                    }
-                )
-            value.append({"player": player, "phases": phases})
+        metric_aliases = self._build_batting_metrics_expr()
+        sql = (
+            "SELECT "
+            + ", ".join(f"{expr} AS {name}" for name, expr in metric_aliases.items())
+            + " FROM deliveries d WHERE d.batter = ?"
+        )
+        params: list[Any] = [player]
+
+        if isinstance(season, int):
+            sql += " AND d.season_id = ?"
+            params.append(season)
+        elif isinstance(season_range[0], int) and isinstance(season_range[1], int):
+            sql += " AND d.season_id BETWEEN ? AND ?"
+            params.extend([season_range[0], season_range[1]])
+
+        sql += self._phase_filter(str(phase) if isinstance(phase, str) else None)
+
+        row = self._run(sql, tuple(params))[0]
+        base = {k: int(row[k]) for k in metric_aliases}
+
+        requested_metrics = plan.metrics or ([plan.metric] if plan.metric else ["runs"])
+        values = {m: self._batting_metric_value(m, base) for m in requested_metrics}
+        scalar = values[requested_metrics[0]] if len(requested_metrics) == 1 else values
+
+        scope_parts = [f"player={player}"]
+        if isinstance(season, int):
+            scope_parts.append(f"season={season}")
+        if isinstance(season_range[0], int) and isinstance(season_range[1], int):
+            scope_parts.append(f"season_range={season_range[0]}-{season_range[1]}")
+        if phase:
+            scope_parts.append(f"phase={phase}")
 
         return {
-            "value": value,
-            "label": "Player phase comparison",
+            "value": scalar,
+            "label": f"{player} {requested_metrics[0].replace('_', ' ')}",
             "evidence": {
-                "source": "MatchGenome IPL database",
-                "scope": f"players={players}" + (f", season={season}" if isinstance(season, int) else "") + (f", phase={phase}" if phase else ""),
+                "interpretation": "player batting aggregate",
+                "resolved_entities": {"player": player},
+                "filters": plan.entities,
+                "metric": requested_metrics,
+                "source_tables": ["deliveries"],
+                "season_scope": scope_parts,
+                "sample_size": base.get("balls", 0),
+                "calculation": "parameterized SQL aggregate over deliveries",
             },
         }
 
-    def _most_sixes_against_bowler(self, plan: QueryPlan) -> dict[str, Any]:
-        bowler = str(plan.entities["bowler"])
-        season = plan.entities.get("season")
-        sql = (
-            "SELECT batter, COALESCE(SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes, COUNT(*) AS balls "
-            "FROM deliveries WHERE bowler = ?"
-        )
-        params: tuple[Any, ...] = (bowler,)
-        if isinstance(season, int):
-            sql += " AND season_id = ?"
-            params += (season,)
-        sql += " GROUP BY batter ORDER BY sixes DESC, balls DESC, batter ASC LIMIT 1"
-        row = self._run(sql, params)[0]
-        return {
-            "value": {"batter": row["batter"], "sixes": int(row["sixes"]), "balls": int(row["balls"])},
-            "label": f"Most sixes against {bowler}",
-            "evidence": {"source": "MatchGenome IPL database", "scope": f"bowler={bowler}"},
-        }
-
-    def _bowler_wickets_vs_team(self, plan: QueryPlan) -> dict[str, Any]:
-        bowler = str(plan.entities["bowler"])
+    def _aggregate_bowler_vs_team(self, plan: QueryPlan) -> dict[str, Any]:
+        bowler = str(plan.entities.get("bowler") or plan.entities.get("player"))
         team = str(plan.entities["team"])
         season = plan.entities.get("season")
 
         sql = (
-            "SELECT COALESCE(SUM(CASE WHEN d.is_wicket = 1 THEN 1 ELSE 0 END), 0) AS wickets, COUNT(*) AS balls "
+            "SELECT "
+            "COALESCE(SUM(CASE WHEN d.is_wicket = 1 THEN 1 ELSE 0 END), 0) AS wickets, "
+            "COALESCE(SUM(d.total_runs - d.bye_runs - d.leg_bye_runs), 0) AS runs_conceded, "
+            "COALESCE(SUM(d.legal_ball), 0) AS legal_balls, "
+            "COALESCE(SUM(CASE WHEN d.total_runs = 0 THEN 1 ELSE 0 END), 0) AS dot_balls "
             "FROM deliveries d "
             "LEFT JOIN match_team_map m ON m.match_id = d.match_id AND m.internal_team_code = d.team_batting "
             "WHERE d.bowler = ? AND COALESCE(m.historical_display_name, d.team_batting) = ?"
         )
-        params: tuple[Any, ...] = (bowler, team)
+        params: list[Any] = [bowler, team]
         if isinstance(season, int):
             sql += " AND d.season_id = ?"
-            params += (season,)
-        row = self._run(sql, params)[0]
+            params.append(season)
+
+        row = self._run(sql, tuple(params))[0]
+        wickets = int(row["wickets"])
+        runs_conceded = int(row["runs_conceded"])
+        legal_balls = int(row["legal_balls"])
+        dot_balls = int(row["dot_balls"])
+
+        metric = str(plan.metric or "wickets")
+        if metric == "economy":
+            value: float | int = round(runs_conceded / (legal_balls / 6.0), 2) if legal_balls else 0.0
+        elif metric == "bowling_strike_rate":
+            value = round(legal_balls / wickets, 2) if wickets else 0.0
+        elif metric == "runs_conceded":
+            value = runs_conceded
+        elif metric == "dot_balls":
+            value = dot_balls
+        elif metric == "dot_ball_pct":
+            value = round(dot_balls * 100.0 / legal_balls, 2) if legal_balls else 0.0
+        else:
+            value = wickets
+
         return {
-            "value": {"wickets": int(row["wickets"]), "balls": int(row["balls"])},
-            "label": f"{bowler} wickets against {team}",
+            "value": value,
+            "label": f"{bowler} {metric.replace('_', ' ')} against {team}",
             "evidence": {
-                "source": "MatchGenome IPL database",
-                "scope": f"bowler={bowler}, opponent={team}" + (f", season={season}" if isinstance(season, int) else ""),
+                "interpretation": "bowler against opponent aggregate",
+                "resolved_entities": {"bowler": bowler, "team": team},
+                "filters": plan.entities,
+                "metric": metric,
+                "source_tables": ["deliveries", "match_team_map"],
+                "sample_size": legal_balls,
+                "calculation": "aggregate by bowler against batting team mapping",
             },
         }
 
-    def _compare_two_players(self, plan: QueryPlan) -> dict[str, Any]:
-        players = [str(x) for x in plan.entities["players"][:2]]
-        season = plan.entities.get("season")
-        phase = plan.entities.get("phase")
+    def _rank(self, plan: QueryPlan) -> dict[str, Any]:
         metric = str(plan.metric or "runs")
+        limit = int(plan.limit or 10)
+        phase = plan.entities.get("phase")
+        season = plan.entities.get("season")
 
-        values: list[dict[str, Any]] = []
-        for player in players:
-            q = QueryPlan(
-                question=plan.question,
-                intent="PLAYER_SEASON_STAT",
-                entities={"player": player, "season": int(season) if isinstance(season, int) else 0, "phase": phase},
-                metric=metric,
-                aggregation="sum",
-                scope=plan.scope,
+        if plan.entity == "batting":
+            if plan.group_by == ["season"] and "player" in plan.entities:
+                player = str(plan.entities["player"])
+                sql = (
+                    "SELECT d.season_id AS season, "
+                    "COALESCE(SUM(d.batter_runs), 0) AS runs, "
+                    "COALESCE(SUM(CASE WHEN d.is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls "
+                    "FROM deliveries d WHERE d.batter = ?"
+                )
+                params: list[Any] = [player]
+                sql += " GROUP BY d.season_id"
+                order_sql = "runs DESC, season ASC"
+                if metric == "strike_rate":
+                    order_sql = "(runs * 100.0 / CASE WHEN balls = 0 THEN 1 ELSE balls END) DESC, balls DESC, season ASC"
+                sql += f" ORDER BY {order_sql} LIMIT 1"
+                row = self._run(sql, tuple(params))[0]
+                balls = int(row["balls"])
+                return {
+                    "value": {
+                        "season": int(row["season"]),
+                        "runs": int(row["runs"]),
+                        "strike_rate": round(int(row["runs"]) * 100.0 / balls, 2) if balls else 0.0,
+                    },
+                    "label": f"Best season for {player}",
+                    "evidence": {
+                        "interpretation": "season ranking within player",
+                        "resolved_entities": {"player": player},
+                        "filters": plan.entities,
+                        "metric": metric,
+                        "source_tables": ["deliveries"],
+                        "sample_size": balls,
+                        "calculation": "group by season and rank",
+                    },
+                }
+
+            sql = (
+                "SELECT d.batter AS player, "
+                "COALESCE(SUM(d.batter_runs), 0) AS runs, "
+                "COALESCE(SUM(CASE WHEN d.batter_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes, "
+                "COALESCE(SUM(CASE WHEN d.is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls "
+                "FROM deliveries d WHERE 1=1"
             )
-            if not isinstance(season, int):
-                if metric in {"runs", "sixes", "strike_rate"}:
-                    sql = "SELECT COALESCE(SUM(batter_runs), 0) AS runs, COALESCE(SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes, COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls FROM deliveries WHERE batter = ?"
-                    params: tuple[Any, ...] = (player,)
-                    sql += self._phase_filter(str(phase) if phase else None)
-                    row = self._run(sql, params)[0]
-                    if metric == "runs":
-                        v = int(row["runs"])
-                    elif metric == "sixes":
-                        v = int(row["sixes"])
-                    else:
-                        balls = int(row["balls"])
-                        v = round((int(row["runs"]) * 100.0 / balls), 2) if balls else 0.0
-                else:
-                    sql = "SELECT COALESCE(SUM(CASE WHEN is_wicket = 1 THEN 1 ELSE 0 END), 0) AS wickets, COALESCE(SUM(total_runs - bye_runs - leg_bye_runs), 0) AS runs, COALESCE(SUM(legal_ball), 0) AS balls FROM deliveries WHERE bowler = ?"
-                    params = (player,)
-                    sql += self._phase_filter(str(phase) if phase else None)
-                    row = self._run(sql, params)[0]
-                    if metric == "wickets":
-                        v = int(row["wickets"])
-                    else:
-                        balls = int(row["balls"])
-                        v = round(int(row["runs"]) / (balls / 6.0), 2) if balls else 0.0
-                values.append({"player": player, "value": v})
+            params: list[Any] = []
+            if isinstance(season, int):
+                sql += " AND d.season_id = ?"
+                params.append(season)
+            sql += self._phase_filter(str(phase) if isinstance(phase, str) else None)
+            sql += " GROUP BY d.batter"
+
+            if plan.threshold and plan.threshold.get("metric") == "runs" and plan.threshold.get("op") == ">":
+                threshold_value = plan.threshold.get("value")
+                if threshold_value is None:
+                    raise ValueError("threshold value is required")
+                threshold = int(threshold_value)
+                sql += " HAVING runs > ?"
+                params.append(threshold)
+
+            if metric == "sixes":
+                sql += " ORDER BY sixes DESC, runs DESC, player ASC"
+            elif metric == "strike_rate":
+                sql += " HAVING balls >= 24 ORDER BY (runs * 100.0 / balls) DESC, balls DESC, player ASC"
             else:
-                result = self._player_season_stat(q)
-                values.append({"player": player, "value": result["value"]})
+                sql += " ORDER BY runs DESC, player ASC"
+
+            sql += " LIMIT ?"
+            params.append(limit)
+            rows = self._run(sql, tuple(params))
+            ranked = []
+            for row in rows:
+                balls = int(row["balls"])
+                ranked.append(
+                    {
+                        "player": row["player"],
+                        "runs": int(row["runs"]),
+                        "sixes": int(row["sixes"]),
+                        "balls": balls,
+                        "strike_rate": round(int(row["runs"]) * 100.0 / balls, 2) if balls else 0.0,
+                    }
+                )
+            return {
+                "value": ranked,
+                "label": f"Top {limit} batting by {metric}",
+                "evidence": {
+                    "interpretation": "batting ranking",
+                    "filters": plan.entities,
+                    "metric": metric,
+                    "source_tables": ["deliveries"],
+                    "sample_size": sum(int(r["balls"]) for r in rows),
+                    "calculation": "group by batter with bounded limit",
+                },
+            }
+
+        # bowling ranking
+        sql = (
+            "SELECT d.bowler AS player, "
+            "COALESCE(SUM(CASE WHEN d.is_wicket = 1 THEN 1 ELSE 0 END), 0) AS wickets, "
+            "COALESCE(SUM(d.total_runs - d.bye_runs - d.leg_bye_runs), 0) AS runs_conceded, "
+            "COALESCE(SUM(d.legal_ball), 0) AS legal_balls "
+            "FROM deliveries d WHERE 1=1"
+        )
+        params = []
+        if isinstance(season, int):
+            sql += " AND d.season_id = ?"
+            params.append(season)
+        if "team" in plan.entities:
+            sql += (
+                " AND EXISTS (SELECT 1 FROM match_team_map m WHERE m.match_id = d.match_id "
+                "AND m.internal_team_code = d.team_batting AND m.historical_display_name = ?)"
+            )
+            params.append(str(plan.entities["team"]))
+
+        sql += self._phase_filter(str(phase) if isinstance(phase, str) else None)
+        sql += " GROUP BY d.bowler"
+
+        if metric == "economy":
+            sql += " HAVING legal_balls >= 24 ORDER BY (runs_conceded * 1.0 / (legal_balls / 6.0)) ASC, legal_balls DESC, player ASC"
+        else:
+            sql += " ORDER BY wickets DESC, legal_balls DESC, player ASC"
+
+        sql += " LIMIT ?"
+        params.append(limit)
+        rows = self._run(sql, tuple(params))
+        ranked = []
+        for row in rows:
+            legal_balls = int(row["legal_balls"])
+            wickets = int(row["wickets"])
+            runs_conceded = int(row["runs_conceded"])
+            ranked.append(
+                {
+                    "player": row["player"],
+                    "wickets": wickets,
+                    "legal_balls": legal_balls,
+                    "economy": round(runs_conceded / (legal_balls / 6.0), 2) if legal_balls else 0.0,
+                    "bowling_strike_rate": round(legal_balls / wickets, 2) if wickets else 0.0,
+                }
+            )
+
+        return {
+            "value": ranked,
+            "label": f"Top {limit} bowling by {metric}",
+            "evidence": {
+                "interpretation": "bowling ranking",
+                "filters": plan.entities,
+                "metric": metric,
+                "source_tables": ["deliveries", "match_team_map"],
+                "sample_size": sum(int(r["legal_balls"]) for r in rows),
+                "calculation": "group by bowler with bounded limit",
+            },
+        }
+
+    def _compare_players(self, plan: QueryPlan) -> dict[str, Any]:
+        players = [str(p) for p in plan.entities.get("players", [])[:2]]
+        metric = str(plan.metric or "runs")
+        values = []
+        for player in players:
+            sub = QueryPlan(
+                question=plan.question,
+                operation="aggregate",
+                entity="player",
+                entities={
+                    "player": player,
+                    **({"season": plan.entities["season"]} if "season" in plan.entities else {}),
+                    **(
+                        {
+                            "season_start": plan.entities["season_start"],
+                            "season_end": plan.entities["season_end"],
+                        }
+                        if "season_start" in plan.entities and "season_end" in plan.entities
+                        else {}
+                    ),
+                    **({"phase": plan.entities["phase"]} if "phase" in plan.entities else {}),
+                },
+                metric=metric,
+                metrics=[metric],
+            )
+            answer = self._aggregate_player(sub)
+            values.append({"player": player, "value": answer["value"]})
 
         better = values[0]["player"] if values[0]["value"] >= values[1]["value"] else values[1]["player"]
         return {
             "value": {"metric": metric, "players": values, "better": better},
-            "label": f"Comparison: {players[0]} vs {players[1]}",
+            "label": f"Comparison of {players[0]} vs {players[1]}",
             "evidence": {
-                "source": "MatchGenome IPL database",
-                "scope": f"metric={metric}" + (f", season={season}" if isinstance(season, int) else "") + (f", phase={phase}" if phase else ""),
+                "interpretation": "player comparison",
+                "resolved_entities": {"players": players},
+                "filters": plan.entities,
+                "metric": metric,
+                "source_tables": ["deliveries"],
+                "calculation": "two independent aggregates compared",
             },
         }
 
-    def _ranking_stat(self, plan: QueryPlan) -> dict[str, Any]:
-        season = int(plan.entities["season"])
-        phase = plan.entities.get("phase")
-        metric = str(plan.metric)
-        limit = int(plan.limit or 10)
+    def _lookup_match_metadata(self, plan: QueryPlan) -> dict[str, Any]:
+        season = plan.entities.get("season")
+        match_type = plan.entities.get("match_type")
+        if not isinstance(season, int):
+            raise ValueError("season is required for match metadata lookup")
 
-        if metric in {"runs", "sixes", "strike_rate"}:
-            select = "batter AS player"
-            group = "batter"
-            phase_filter = self._phase_filter(str(phase) if phase else None)
-            sql = (
-                "SELECT "
-                + select
-                + ", COALESCE(SUM(batter_runs), 0) AS runs, "
-                "COALESCE(SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes, "
-                "COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls "
-                "FROM deliveries WHERE season_id = ?"
-                + phase_filter
-                + f" GROUP BY {group} "
-            )
-            if metric == "runs":
-                sql += "ORDER BY runs DESC, player ASC LIMIT ?"
-            elif metric == "sixes":
-                sql += "ORDER BY sixes DESC, player ASC LIMIT ?"
-            else:
-                sql += "HAVING balls >= 24 ORDER BY (runs * 100.0 / balls) DESC, balls DESC, player ASC LIMIT ?"
-            rows = self._run(sql, (season, limit))
-            ranking = []
-            for r in rows:
-                balls = int(r["balls"])
-                ranking.append(
-                    {
-                        "player": r["player"],
-                        "runs": int(r["runs"]),
-                        "sixes": int(r["sixes"]),
-                        "balls": balls,
-                        "strike_rate": round((int(r["runs"]) * 100.0 / balls), 2) if balls else 0.0,
-                    }
-                )
-        else:
-            phase_filter = self._phase_filter(str(phase) if phase else None)
-            sql = (
-                "SELECT bowler AS player, COALESCE(SUM(CASE WHEN is_wicket = 1 THEN 1 ELSE 0 END), 0) AS wickets, "
-                "COALESCE(SUM(total_runs - bye_runs - leg_bye_runs), 0) AS runs, COALESCE(SUM(legal_ball), 0) AS balls "
-                "FROM deliveries WHERE season_id = ?"
-                + phase_filter
-                + " GROUP BY bowler "
-            )
-            if metric == "wickets":
-                sql += "ORDER BY wickets DESC, player ASC LIMIT ?"
-            else:
-                sql += "HAVING balls >= 24 ORDER BY (runs * 1.0 / (balls / 6.0)) ASC, balls DESC, player ASC LIMIT ?"
-            rows = self._run(sql, (season, limit))
-            ranking = []
-            for r in rows:
-                balls = int(r["balls"])
-                ranking.append(
-                    {
-                        "player": r["player"],
-                        "wickets": int(r["wickets"]),
-                        "balls": balls,
-                        "economy": round(int(r["runs"]) / (balls / 6.0), 2) if balls else 0.0,
-                    }
-                )
-
-        return {
-            "value": ranking,
-            "label": f"Top {limit} by {metric} in IPL {season}",
-            "evidence": {
-                "source": "MatchGenome IPL database",
-                "scope": f"season={season}, metric={metric}" + (f", phase={phase}" if phase else ""),
-            },
-        }
-
-    def _match_player_of_match(self, plan: QueryPlan) -> dict[str, Any]:
-        season = int(plan.entities["season"])
-        final_only = bool(plan.entities.get("stage") == "final")
-        sql = "SELECT match_id, match_date, player_of_match, team_a_display, team_b_display FROM match_metadata WHERE season_id = ?"
-        if final_only:
+        sql = (
+            "SELECT match_id, match_date, team_a_display, team_b_display, player_of_match, match_type "
+            "FROM match_metadata WHERE season_id = ?"
+        )
+        params: list[Any] = [season]
+        if match_type == "final":
             sql += " AND LOWER(COALESCE(match_type, '')) = 'final'"
         sql += " ORDER BY match_date, match_id LIMIT 1"
-        rows = self._run(sql, (season,))
+        rows = self._run(sql, tuple(params))
         if not rows:
             raise ValueError("No matching match metadata found")
         row = rows[0]
         return {
             "value": {
-                "player_of_match": row["player_of_match"],
                 "match_id": int(row["match_id"]),
                 "match_date": row["match_date"],
                 "teams": [row["team_a_display"], row["team_b_display"]],
+                "player_of_match": row["player_of_match"],
             },
-            "label": f"Player of the match in IPL {season}{' final' if final_only else ''}",
-            "evidence": {"source": "MatchGenome IPL database", "scope": f"match_metadata season={season}"},
-        }
-
-    def _multi_hop_pom_runs_final(self, plan: QueryPlan) -> dict[str, Any]:
-        season = int(plan.entities["season"])
-        match_rows = self._run(
-            "SELECT match_id, player_of_match, team_a_display, team_b_display, match_date FROM match_metadata WHERE season_id = ? AND LOWER(COALESCE(match_type, '')) = 'final' ORDER BY match_date, match_id LIMIT 1",
-            (season,),
-        )
-        if not match_rows:
-            raise ValueError("No final match metadata found for this season")
-
-        match = match_rows[0]
-        pom = str(match["player_of_match"] or "").strip()
-        if not pom:
-            raise ValueError("Player of the match not available for this final")
-
-        runs_row = self._run(
-            "SELECT COALESCE(SUM(batter_runs), 0) AS runs, COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls FROM deliveries WHERE match_id = ? AND batter = ?",
-            (int(match["match_id"]), pom),
-        )[0]
-
-        runs = int(runs_row["runs"])
-        balls = int(runs_row["balls"])
-        return {
-            "value": {
-                "match_id": int(match["match_id"]),
-                "player_of_match": pom,
-                "runs": runs,
-                "balls": balls,
-                "strike_rate": round((runs * 100.0 / balls), 2) if balls else 0.0,
-                "teams": [match["team_a_display"], match["team_b_display"]],
-                "match_date": match["match_date"],
-            },
-            "label": f"Player of the match in IPL {season} final and his runs",
+            "label": "Match metadata lookup",
             "evidence": {
-                "source": "MatchGenome IPL database",
-                "scope": f"season={season}, final, match_id={int(match['match_id'])}",
+                "interpretation": "match metadata lookup",
+                "filters": plan.entities,
+                "metric": "player_of_match",
+                "source_tables": ["match_metadata"],
+                "calculation": "filtered metadata lookup",
             },
         }
+
+    def _player_recent_matches(self, plan: QueryPlan) -> dict[str, Any]:
+        player = str(plan.entities["player"])
+        limit = int(plan.limit or 3)
+        matches = self._run(
+            "SELECT season_id, match_id FROM deliveries WHERE batter = ? GROUP BY season_id, match_id ORDER BY season_id DESC, match_id DESC LIMIT ?",
+            (player, limit),
+        )
+        rows_out: list[dict[str, Any]] = []
+        for row in matches:
+            season = int(row["season_id"])
+            match_id = int(row["match_id"])
+            agg = self._run(
+                "SELECT COALESCE(SUM(batter_runs), 0) AS runs, COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls, COALESCE(SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes FROM deliveries WHERE season_id = ? AND match_id = ? AND batter = ?",
+                (season, match_id, player),
+            )[0]
+            balls = int(agg["balls"])
+            runs = int(agg["runs"])
+            rows_out.append(
+                {
+                    "season": season,
+                    "match_id": match_id,
+                    "runs": runs,
+                    "balls": balls,
+                    "sixes": int(agg["sixes"]),
+                    "strike_rate": round(runs * 100.0 / balls, 2) if balls else 0.0,
+                }
+            )
+
+        return {
+            "value": rows_out,
+            "label": f"Recent matches for {player}",
+            "evidence": {
+                "interpretation": "recent match trend",
+                "filters": plan.entities,
+                "metric": plan.metrics or [plan.metric or "runs"],
+                "source_tables": ["deliveries"],
+                "sample_size": len(rows_out),
+                "calculation": "latest grouped matches then per-match aggregate",
+            },
+        }
+
+    def _player_vs_bowling_type(self, plan: QueryPlan) -> dict[str, Any]:
+        player = str(plan.entities["player"])
+        bowling_type = str(plan.entities["bowling_type"])
+        metric = str(plan.metric or "strike_rate")
+        like_value = "%left%pace%" if bowling_type == "left-arm pace" else "%left%spin%" if bowling_type == "left-arm spin" else "%right%pace%" if bowling_type == "right-arm pace" else "%right%spin%"
+        row = self._run(
+            "SELECT COALESCE(SUM(batter_runs), 0) AS runs, COALESCE(SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END), 0) AS balls, COALESCE(SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END), 0) AS sixes FROM deliveries WHERE batter = ? AND LOWER(COALESCE(bowler_type, '')) LIKE ?",
+            (player, like_value),
+        )[0]
+        runs = int(row["runs"])
+        balls = int(row["balls"])
+        sixes = int(row["sixes"])
+        if metric == "runs":
+            value: float | int = runs
+        elif metric == "sixes":
+            value = sixes
+        else:
+            value = round(runs * 100.0 / balls, 2) if balls else 0.0
+
+        return {
+            "value": value,
+            "label": f"{player} vs {bowling_type}",
+            "evidence": {
+                "interpretation": "player versus bowling type",
+                "filters": plan.entities,
+                "metric": metric,
+                "source_tables": ["deliveries"],
+                "sample_size": balls,
+                "calculation": "bowler_type filtered batting aggregate",
+            },
+        }
+
+    def execute(self, plan: QueryPlan) -> dict[str, Any]:
+        if plan.operation == "clarify":
+            reason = str(plan.entities.get("reason", "ambiguous_entity"))
+            return {
+                "value": {"candidates": plan.entities.get("candidates", [])},
+                "label": "Need clarification",
+                "evidence": {
+                    "interpretation": "entity disambiguation",
+                    "reason": reason,
+                    "source_tables": ["players", "match_team_map", "team_alias"],
+                },
+            }
+
+        if plan.operation in {"aggregate", "lookup"}:
+            if plan.entity == "player":
+                return self._aggregate_player(plan)
+            if plan.entity == "bowler_vs_team":
+                return self._aggregate_bowler_vs_team(plan)
+            if plan.entity == "match_metadata":
+                return self._lookup_match_metadata(plan)
+            if plan.entity == "player_vs_bowling_type":
+                return self._player_vs_bowling_type(plan)
+
+        if plan.operation == "rank":
+            return self._rank(plan)
+
+        if plan.operation == "compare":
+            return self._compare_players(plan)
+
+        if plan.operation == "trend" and plan.entity == "player_recent_matches":
+            return self._player_recent_matches(plan)
+
+        raise ValueError("Unsupported semantic operation/entity combination")
 
 
 class AskMatchGenomeEngine:
@@ -969,8 +1438,8 @@ class AskMatchGenomeEngine:
         rule_provider = RuleBasedPlanProvider()
         llm_provider = LlmAskPlanProvider()
         self.provider = provider or CompositePlanProvider(llm_provider, rule_provider)
-        self.validator = QueryPlanValidator()
-        self.executor = QueryExecutor(conn)
+        self.validator = QueryPlanValidator(self.semantic)
+        self.executor = QueryExecutor(conn, self.semantic)
         self.context = ConversationContext()
 
     def _split_questions(self, text: str) -> list[str]:
@@ -983,14 +1452,48 @@ class AskMatchGenomeEngine:
             piece = chunk.strip(" ,")
             if not piece:
                 continue
-            comma_parts = re.split(r",\s*(?=how many|who|what|compare|show|which|in \d{4})", piece, flags=re.IGNORECASE)
+            comma_parts = re.split(r",\s*(?=how|who|what|compare|show|which|in\s+\d{4})", piece, flags=re.IGNORECASE)
             for item in comma_parts:
-                and_parts = re.split(r"\s+and\s+(?=how many|who|what|compare|show|which)", item, flags=re.IGNORECASE)
+                and_parts = re.split(r"\s+and\s+(?=how|who|what|compare|show|which)", item, flags=re.IGNORECASE)
                 for sub in and_parts:
-                    sub = sub.strip(" ,")
-                    if sub:
-                        out.append(sub)
+                    trimmed = sub.strip(" ,")
+                    if trimmed:
+                        out.append(trimmed)
         return out
+
+    def _plan_to_payload(self, plan: QueryPlan) -> dict[str, Any]:
+        return {
+            "operation": plan.operation,
+            "entity": plan.entity,
+            "entities": plan.entities,
+            "metric": plan.metric,
+            "metrics": plan.metrics,
+            "filters": plan.filters,
+            "group_by": plan.group_by,
+            "order_by": plan.order_by,
+            "limit": plan.limit,
+            "threshold": plan.threshold,
+        }
+
+    @staticmethod
+    def _extract_context_entities(plan: QueryPlan, answer: dict[str, Any]) -> dict[str, Any]:
+        entities = dict(plan.entities)
+        value = answer.get("value")
+        if isinstance(value, dict):
+            if isinstance(value.get("player"), str):
+                entities["player"] = value["player"]
+            if isinstance(value.get("player_of_match"), str):
+                entities["player"] = value["player_of_match"]
+            players = value.get("players")
+            if isinstance(players, list) and players:
+                first = players[0]
+                if isinstance(first, dict) and isinstance(first.get("player"), str):
+                    entities["player"] = first["player"]
+        if isinstance(value, list) and value:
+            first = value[0]
+            if isinstance(first, dict) and isinstance(first.get("player"), str):
+                entities["player"] = first["player"]
+        return entities
 
     def ask(self, question: str) -> dict[str, Any]:
         sub_questions = self._split_questions(question)
@@ -999,13 +1502,14 @@ class AskMatchGenomeEngine:
 
         results: list[dict[str, Any]] = []
         for sub in sub_questions:
+            started = time.perf_counter()
             plan = self.provider.build_plan(sub, self.semantic, self.context)
             if plan is None:
                 results.append(
                     {
                         "question": sub,
                         "status": "unsupported",
-                        "message": "MatchGenome does not currently support this question shape with verified local data.",
+                        "message": "MatchGenome could not map this to supported IPL analytics semantics with verified local data.",
                     }
                 )
                 continue
@@ -1013,36 +1517,38 @@ class AskMatchGenomeEngine:
             try:
                 self.validator.validate(plan)
                 answer = self.executor.execute(plan)
+                elapsed_ms = round((time.perf_counter() - started) * 1000.0, 2)
                 self.context.last_plan = plan
+                self.context.last_entities = self._extract_context_entities(plan, answer)
+
+                status = "clarification_needed" if plan.operation == "clarify" else "ok"
                 results.append(
                     {
                         "question": sub,
-                        "status": "ok",
-                        "query_plan": {
-                            "intent": plan.intent,
-                            "entities": plan.entities,
-                            "metric": plan.metric,
-                            "aggregation": plan.aggregation,
-                            "scope": plan.scope,
-                            "limit": plan.limit,
-                        },
+                        "status": status,
+                        "query_plan": self._plan_to_payload(plan),
                         "result": answer,
+                        "latency_ms": elapsed_ms,
                     }
                 )
             except Exception as exc:
+                message = str(exc)
+                if "No matching" in message or "not available" in message or "required" in message:
+                    results.append(
+                        {
+                            "question": sub,
+                            "status": "unsupported",
+                            "query_plan": self._plan_to_payload(plan),
+                            "message": message,
+                        }
+                    )
+                    continue
                 results.append(
                     {
                         "question": sub,
                         "status": "error",
-                        "query_plan": {
-                            "intent": plan.intent,
-                            "entities": plan.entities,
-                            "metric": plan.metric,
-                            "aggregation": plan.aggregation,
-                            "scope": plan.scope,
-                            "limit": plan.limit,
-                        },
-                        "message": str(exc),
+                        "query_plan": self._plan_to_payload(plan),
+                        "message": message,
                     }
                 )
 

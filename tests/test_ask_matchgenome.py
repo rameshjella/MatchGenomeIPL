@@ -28,6 +28,8 @@ class AskMatchGenomeTests(unittest.TestCase):
         ingest_csv_to_sqlite(conn, self.fixture)
         self.conn = conn
         self.engine = AskMatchGenomeEngine(conn)
+        self.validator = QueryPlanValidator(self.engine.semantic)
+        self.executor = QueryExecutor(self.conn, self.engine.semantic)
 
     def tearDown(self) -> None:
         self.conn.close()
@@ -37,7 +39,8 @@ class AskMatchGenomeTests(unittest.TestCase):
         payload = self.engine.ask("How many sixes did PlayerC hit in 2020?")
         self.assertEqual(payload["answered"], 1)
         self.assertEqual(payload["results"][0]["status"], "ok")
-        self.assertEqual(payload["results"][0]["query_plan"]["intent"], "PLAYER_SEASON_STAT")
+        self.assertEqual(payload["results"][0]["query_plan"]["operation"], "aggregate")
+        self.assertEqual(payload["results"][0]["query_plan"]["entity"], "player")
 
     def test_alias_resolution_by_token(self) -> None:
         payload = self.engine.ask("How many runs did PlayerA score in 2020?")
@@ -49,56 +52,60 @@ class AskMatchGenomeTests(unittest.TestCase):
         self.assertGreaterEqual(payload["sub_questions"], 2)
         self.assertGreaterEqual(payload["answered"], 2)
 
+    def test_batter_run_rate_maps_to_strike_rate(self) -> None:
+        payload = self.engine.ask("PlayerA run rate in 2020")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertEqual(payload["results"][0]["query_plan"]["metric"], "strike_rate")
+        self.assertIsInstance(payload["results"][0]["result"]["value"], float)
+
     def test_unsupported_question_is_not_fabricated(self) -> None:
         payload = self.engine.ask("Tell me database credentials")
         self.assertEqual(payload["results"][0]["status"], "unsupported")
 
     def test_executor_rejects_non_select_sql(self) -> None:
-        executor = QueryExecutor(self.conn)
         with self.assertRaises(ValueError):
-            executor._safe_readonly("DELETE FROM deliveries")
+            self.executor._safe_readonly("DELETE FROM deliveries")
 
-    def test_unknown_intent_rejected(self) -> None:
-        executor = QueryExecutor(self.conn)
+    def test_validator_rejects_unknown_operation(self) -> None:
         with self.assertRaises(ValueError):
-            executor.execute(QueryPlan(question="x", intent="BAD", entities={}))
-
-    def test_validator_rejects_extra_entity_fields(self) -> None:
-        validator = QueryPlanValidator()
-        with self.assertRaises(ValueError):
-            validator.validate(
-                QueryPlan(
-                    question="x",
-                    intent="PLAYER_SEASON_STAT",
-                    entities={"player": "PlayerA", "season": 2020, "hack": "x"},
-                    metric="runs",
-                )
-            )
+            self.validator.validate(QueryPlan(question="x", operation="hack", entity="player", entities={"player": "PlayerA"}))
 
     def test_validator_rejects_non_integer_season(self) -> None:
-        validator = QueryPlanValidator()
         with self.assertRaises(ValueError):
-            validator.validate(
+            self.validator.validate(
                 QueryPlan(
                     question="x",
-                    intent="PLAYER_SEASON_STAT",
+                    operation="aggregate",
+                    entity="player",
                     entities={"player": "PlayerA", "season": "2020"},
                     metric="runs",
                 )
             )
 
     def test_validator_rejects_limit_out_of_range(self) -> None:
-        validator = QueryPlanValidator()
         with self.assertRaises(ValueError):
-            validator.validate(
+            self.validator.validate(
                 QueryPlan(
                     question="x",
-                    intent="RANKING_STAT",
+                    operation="rank",
+                    entity="batting",
                     entities={"season": 2020},
                     metric="runs",
                     limit=100,
                 )
             )
+
+    def test_compile_rejects_unknown_table(self) -> None:
+        with self.assertRaises(ValueError):
+            self.executor._compile_select(table="not_a_table", select_columns=["x"])
+
+    def test_compile_rejects_unknown_column(self) -> None:
+        with self.assertRaises(ValueError):
+            self.executor._compile_select(table="deliveries", select_columns=["season_id", "unknown_col"])
+
+    def test_compile_rejects_unsafe_expression(self) -> None:
+        with self.assertRaises(ValueError):
+            self.executor._compile_select(table="deliveries", select_columns=["season_id"], where=[("season_id", "like", "2020")])
 
 
 if __name__ == "__main__":
