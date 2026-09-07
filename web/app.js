@@ -46,6 +46,8 @@ const state = {
   playerCapabilities: { hasBatting: false, hasBowling: false },
   hasTeamIdOnlyData: false,
   teams: [],
+  teamAssetIndex: {},
+  selectedFixtureMatchId: null,
 };
 
 const els = {
@@ -105,6 +107,7 @@ const els = {
   startReplayBtn: document.getElementById("startReplayBtn"),
 
   replayPanel: document.getElementById("replayPanel"),
+  replayBanner: document.getElementById("replayBanner"),
   matchTitle: document.getElementById("matchTitle"),
   matchSubline: document.getElementById("matchSubline"),
   replayTeamNotice: document.getElementById("replayTeamNotice"),
@@ -202,6 +205,7 @@ function parseRoute() {
     seasonId: params.get("season_id") || "",
     matchId: params.get("match_id") || "",
     status: params.get("status") || "",
+    team: params.get("team") || "",
   };
 }
 
@@ -299,14 +303,31 @@ function setView(view) {
 function formatMatchCard(item) {
   const winner = item.winner ? `Winner: ${item.winner}` : "Winner: pending";
   const matchId = Number(item.match_id || 0);
+  const active = state.selectedFixtureMatchId === matchId ? "active" : "";
   return `
-    <button class='panel-block fixture-card' type='button' data-match-id='${matchId}'>
+    <article class='panel-block fixture-card ${active}' data-match-id='${matchId}'>
       <p><strong>${teamLabel(item.team_a, "Team A")} vs ${teamLabel(item.team_b, "Team B")}</strong></p>
       <p class='muted'>IPL ${item.season_id} · Match ${item.match_number || "-"} · ${item.match_date || "Date unknown"}</p>
       <p class='muted'>${item.venue || "Venue unknown"}${item.city ? `, ${item.city}` : ""}</p>
       <p class='muted'>${item.status} · ${winner}</p>
-    </button>
+      <div class='row-actions'><button type='button' class='fixture-open-chip' data-match-id='${matchId}'>Open match details</button></div>
+    </article>
   `;
+}
+
+function fixturesRoute(matchId = "") {
+  return {
+    view: "fixtures",
+    season_id: Number(els.fixturesSeasonSelect.value || 0) || "",
+    status: (els.fixturesStatusSelect.value || "").trim(),
+    team: (els.fixturesTeamInput.value || "").trim(),
+    match_id: matchId,
+  };
+}
+
+function focusFixtureDetail() {
+  els.fixtureDetail.scrollIntoView({ behavior: "smooth", block: "start" });
+  els.fixtureDetail.focus({ preventScroll: true });
 }
 
 async function loadFixtures() {
@@ -323,18 +344,30 @@ async function loadFixtures() {
     node.addEventListener("click", () => {
       const matchId = Number(node.getAttribute("data-match-id") || 0);
       if (!matchId) return;
-      const seasonId = Number(els.fixturesSeasonSelect.value || 0);
-      const status = (els.fixturesStatusSelect.value || "").trim();
-      loadFixtureDetail(matchId).catch((err) => setStatus(err.message || "Failed to load match details.", "error"));
-      setRoute({ view: "fixtures", season_id: seasonId || "", match_id: matchId, status });
+      state.selectedFixtureMatchId = matchId;
+      els.fixturesList.querySelectorAll(".fixture-card").forEach((card) => card.classList.remove("active"));
+      node.classList.add("active");
+      setRoute(fixturesRoute(matchId));
+      loadFixtureDetail(matchId).catch((err) => setStatus(err.message || "Failed to load match details", "error"));
+    });
+  });
+  els.fixturesList.querySelectorAll(".fixture-open-chip").forEach((node) => {
+    node.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const matchId = Number(node.getAttribute("data-match-id") || 0);
+      if (!matchId) return;
+      setRoute(fixturesRoute(matchId));
+      loadFixtureDetail(matchId).catch((err) => setStatus(err.message || "Failed to load match details", "error"));
     });
   });
 }
 
 async function loadFixtureDetail(matchId) {
-  const [match, innings] = await Promise.all([
+  state.selectedFixtureMatchId = Number(matchId || 0) || null;
+  const [match, innings, scorecard] = await Promise.all([
     api.get(`/api/matches/${matchId}`),
     api.get(`/api/matches/${matchId}/innings`),
+    api.get(`/api/matches/${matchId}/scorecard`),
   ]);
   const meta = match.metadata || {};
   const outcome = meta.outcome || {};
@@ -342,14 +375,59 @@ async function loadFixtureDetail(matchId) {
   const inningsRows = (innings.innings || [])
     .map((item) => `<li>Innings ${item.innings}: ${teamLabel(item.team_batting, "Team")} ${item.runs}/${item.wickets} in ${toOverNotation(item.legal_balls)} overs</li>`)
     .join("");
+  const inningsScorecard = Array.isArray(scorecard.innings) ? scorecard.innings : [];
+  const renderRows = (rows, columns) => {
+    if (!rows.length) return "<p class='muted'>No rows available.</p>";
+    return `<div class='table-wrap'><table class='mini-table'><thead><tr>${columns.map((c) => `<th>${c.label}</th>`).join("")}</tr></thead><tbody>${rows
+      .map((row) => `<tr>${columns.map((c) => `<td>${metricDisplay(row[c.key])}</td>`).join("")}</tr>`)
+      .join("")}</tbody></table></div>`;
+  };
   els.fixtureDetail.innerHTML = `
     <h4>${teamLabel(meta.team_a_display, "Team A")} vs ${teamLabel(meta.team_b_display, "Team B")}</h4>
     <p class='muted'>IPL ${match.season_id} · Match ${meta.match_number || "-"} · ${meta.match_date || "Date unknown"}</p>
     <p>${meta.venue || "Venue unknown"}${meta.city ? `, ${meta.city}` : ""}</p>
-    <p>Toss: ${teamLabel(toss.winner, "Unknown")} (${toss.decision || "-"})</p>
-    <p>Result: ${teamLabel(outcome.winner, "Pending")} ${outcome.result_margin ? `by ${outcome.result_margin} ${outcome.result_type || ""}` : ""}</p>
-    <p>Player of match: ${outcome.player_of_match || "-"}</p>
-    <ul>${inningsRows || "<li>No innings data found.</li>"}</ul>
+    <div class='fixture-detail-grid'>
+      <div class='panel-block'>
+        <h5>Summary</h5>
+        <p>Toss: ${teamLabel(toss.winner, "Unknown")} (${toss.decision || "-"})</p>
+        <p>Result: ${teamLabel(outcome.winner, "Pending")} ${outcome.result_margin ? `by ${outcome.result_margin} ${outcome.result_type || ""}` : ""}</p>
+        <p>Player of match: ${outcome.player_of_match || "-"}</p>
+        <ul>${inningsRows || "<li>No innings data found.</li>"}</ul>
+      </div>
+      <div class='panel-block'>
+        <h5>Scorecard</h5>
+        ${inningsScorecard.length
+          ? inningsScorecard
+              .map(
+                (item) => `
+            <details ${Number(item.innings) === 1 ? "open" : ""}>
+              <summary>Innings ${item.innings} · ${teamLabel(item.batting_team, "Team")} ${item.score?.runs || 0}/${item.score?.wickets || 0} (${item.score?.overs || "0.0"} ov)</summary>
+              <p class='muted'>${teamLabel(item.batting_team, "Team A")} batting vs ${teamLabel(item.bowling_team, "Team B")} bowling</p>
+              <h6>Batting</h6>
+              ${renderRows(item.batting || [], [
+                { key: "player", label: "Player" },
+                { key: "runs", label: "R" },
+                { key: "balls", label: "B" },
+                { key: "fours", label: "4s" },
+                { key: "sixes", label: "6s" },
+                { key: "strike_rate", label: "SR" },
+                { key: "status", label: "Status" },
+              ])}
+              <h6>Bowling</h6>
+              ${renderRows(item.bowling || [], [
+                { key: "player", label: "Bowler" },
+                { key: "overs", label: "Overs" },
+                { key: "runs_conceded", label: "Runs" },
+                { key: "wickets", label: "Wkts" },
+                { key: "dot_balls", label: "Dots" },
+                { key: "economy", label: "Econ" },
+              ])}
+            </details>`,
+              )
+              .join("")
+          : "<p class='muted'>Scorecard is not available for this match.</p>"}
+      </div>
+    </div>
     <div class='row-actions'>
       <button type='button' class='primary' id='openFixtureInTimeMachineBtn'>Open in Time Machine</button>
     </div>
@@ -360,13 +438,21 @@ async function loadFixtureDetail(matchId) {
       setRoute({ view: "time_machine", season_id: match.season_id, match_id: matchId });
     });
   }
+  focusFixtureDetail();
 }
 
 async function loadTeams() {
   const payload = await api.get("/api/teams");
   state.teams = payload.teams || [];
+  buildTeamAssetIndex(state.teams);
+  if (state.matches.length) {
+    renderMatchCards();
+  }
   els.teamsSelect.innerHTML = "";
   state.teams.forEach((t) => els.teamsSelect.appendChild(option(t.team, t.team)));
+  if (!els.teamsSelect.value && state.teams.length) {
+    els.teamsSelect.value = String(state.teams[0].team);
+  }
 }
 
 async function loadTeamDetails() {
@@ -384,11 +470,20 @@ async function loadTeamDetails() {
     <p class='muted'>Source: ${seasonInfo.source || info.source || "-"} · Verification: ${seasonInfo.verification_status || info.verification_status || "-"}</p>
     <h4>Squad snapshot</h4>
     ${squad.length
-      ? `<div class='table-wrap'><table class='mini-table'><thead><tr><th>Player</th><th>Balls</th><th>Runs</th><th>Wickets</th></tr></thead><tbody>${squad
-          .map((row) => `<tr><td>${row.player}</td><td>${row.balls}</td><td>${row.runs}</td><td>${row.wickets}</td></tr>`)
+      ? `<div class='table-wrap'><table class='mini-table'><thead><tr><th>Player</th><th>Matches</th><th>Innings</th><th>Balls</th><th>Runs</th><th>Wickets</th></tr></thead><tbody>${squad
+          .map(
+            (row) =>
+              `<tr><td><button type='button' class='inline-player' data-player='${row.player || ""}'>${row.player || "-"}</button></td><td>${metricDisplay(row.matches)}</td><td>${metricDisplay(row.innings)}</td><td>${metricDisplay(row.balls)}</td><td>${metricDisplay(row.runs)}</td><td>${metricDisplay(row.wickets)}</td></tr>`,
+          )
           .join("")}</tbody></table></div>`
       : "<p class='muted'>No squad sample for this season/team.</p>"}
   `;
+  els.teamDetails.querySelectorAll(".inline-player").forEach((button) => {
+    button.addEventListener("click", () => {
+      const player = button.getAttribute("data-player");
+      if (player) setRoute({ view: "player", player });
+    });
+  });
 }
 
 async function loadStatsWorkspace() {
@@ -436,14 +531,9 @@ async function selectMatchInTimeMachine(seasonId, matchId) {
     els.seasonSelect.value = String(season);
     await loadMatches();
   }
-  state.selectedMatch = state.matches.find((m) => Number(m.match_id) === match) || null;
-  state.selectedMatchId = state.selectedMatch ? Number(state.selectedMatch.match_id) : null;
-  renderMatchCards();
-  if (state.selectedMatch) {
-    const first = state.selectedMatch;
-    els.selectedMatchMeta.textContent = `${matchTitleFromMeta(first)} · IPL ${first.season_id} · Match ${first.match_number || first.season_match_number || "-"} · Match ID ${first.match_id}`;
-    await loadInnings();
-  }
+  const selected = state.matches.find((m) => Number(m.match_id) === match) || null;
+  if (!selected) return;
+  await selectTimeMachineMatch(selected);
 }
 
 function setPlayerTab(tab) {
@@ -490,6 +580,99 @@ function sortUnique(values) {
   return [...new Set(values.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
 }
 
+function normalizeTeamKey(value) {
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  const aliases = {
+    delhidaredevils: "delhicapitals",
+    kingsxipunjab: "punjabkings",
+    risingpunesupergiants: "risingpunesupergiant",
+    gujaratlions: "gujarattitans",
+  };
+  return aliases[raw] || raw;
+}
+
+function initials(value) {
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return "TM";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function buildTeamAssetIndex(teams) {
+  const index = {};
+  (teams || []).forEach((item) => {
+    const keys = [item.team, item.short_name, item.historical_name].map(normalizeTeamKey).filter(Boolean);
+    keys.forEach((key) => {
+      index[key] = item;
+    });
+  });
+  state.teamAssetIndex = index;
+}
+
+function teamAssetForName(name) {
+  const key = normalizeTeamKey(name);
+  return key ? state.teamAssetIndex[key] || null : null;
+}
+
+function renderTeamLogo(name) {
+  const asset = teamAssetForName(name);
+  const fallback = `<span class='team-logo-fallback'>${initials(name)}</span>`;
+  if (asset && asset.logo_asset_path) {
+    return `<span class='team-logo-shell'><img class='team-logo' src='${asset.logo_asset_path}' alt='${name} logo' loading='lazy' onerror='this.hidden=true;this.nextElementSibling.hidden=false;' /><span class='team-logo-fallback' hidden>${initials(name)}</span></span>`;
+  }
+  return fallback;
+}
+
+function renderMatchBanner(teamA, teamB) {
+  const a = teamAssetForName(teamA);
+  const b = teamAssetForName(teamB);
+  const banner = (a && a.banner_asset_path) || (b && b.banner_asset_path);
+  const fallback = `<div class='team-banner-fallback'>${teamA} vs ${teamB}</div>`;
+  if (!banner) return fallback;
+  return `<div class='team-banner-shell'><img class='team-banner' src='${banner}' alt='${teamA} vs ${teamB} banner' loading='lazy' onerror='this.hidden=true;this.nextElementSibling.hidden=false;' /><div class='team-banner-fallback' hidden>${teamA} vs ${teamB}</div></div>`;
+}
+
+function filteredMatches() {
+  const query = (els.matchSearchInput.value || "").trim().toLowerCase();
+  const teamFilter = (els.teamFilterSelect.value || "").trim();
+  return state.matches.filter((m) => {
+    const teamA = teamLabel(m.team_a, "Team A");
+    const teamB = teamLabel(m.team_b, "Team B");
+    if (teamFilter && teamA !== teamFilter && teamB !== teamFilter) return false;
+    if (!query) return true;
+    const text = [teamA, teamB, String(m.match_id), String(m.match_date || ""), String(m.venue || ""), String(m.city || ""), String(m.match_number || m.season_match_number || "")]
+      .join(" ")
+      .toLowerCase();
+    return text.includes(query);
+  });
+}
+
+async function selectTimeMachineMatch(match) {
+  state.selectedMatchId = Number(match.match_id);
+  state.selectedMatch = match;
+  els.selectedMatchMeta.textContent = `${matchTitleFromMeta(match)} · IPL ${match.season_id} · Match ${match.match_number || match.season_match_number || "-"} · Match ID ${match.match_id}`;
+  if (els.replayBanner) {
+    const banner = renderMatchBanner(teamLabel(match.team_a, "Team A"), teamLabel(match.team_b, "Team B"));
+    els.replayBanner.hidden = !banner;
+    els.replayBanner.innerHTML = banner;
+  }
+  renderMatchCards();
+  await loadInnings();
+}
+
+async function jumpToReplayWidgets(match) {
+  await selectTimeMachineMatch(match);
+  if (!state.selectedInnings) return;
+  await startReplay();
+  els.replayPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function applyTeamDataNotice() {
   const msg = "Some matches still include unresolved team IDs. MatchGenome shows original IDs only when verified enrichment is unavailable.";
   els.teamDataNotice.hidden = !state.hasTeamIdOnlyData;
@@ -512,27 +695,7 @@ function renderTeamFilterOptions() {
 }
 
 function renderMatchCards() {
-  const query = (els.matchSearchInput.value || "").trim().toLowerCase();
-  const teamFilter = (els.teamFilterSelect.value || "").trim();
-
-  const filtered = state.matches.filter((m) => {
-    const teamA = teamLabel(m.team_a, "Team A");
-    const teamB = teamLabel(m.team_b, "Team B");
-    if (teamFilter && teamA !== teamFilter && teamB !== teamFilter) return false;
-    if (!query) return true;
-    const text = [
-      teamA,
-      teamB,
-      String(m.match_id),
-      String(m.match_date || ""),
-      String(m.venue || ""),
-      String(m.city || ""),
-      String(m.match_number || m.season_match_number || ""),
-    ]
-      .join(" ")
-      .toLowerCase();
-    return text.includes(query);
-  });
+  const filtered = filteredMatches();
 
   els.matchListSummary.textContent = `${filtered.length} match${filtered.length === 1 ? "" : "es"} available`;
   els.matchCards.innerHTML = "";
@@ -546,25 +709,36 @@ function renderMatchCards() {
     const unresolved = hasUnresolvedTeamName(m.team_a) || hasUnresolvedTeamName(m.team_b);
     const teamA = teamLabel(m.team_a, "Team A");
     const teamB = teamLabel(m.team_b, "Team B");
-    const card = document.createElement("button");
-    card.type = "button";
+    const card = document.createElement("article");
     card.className = `match-card ${state.selectedMatchId === Number(m.match_id) ? "active" : ""}`;
     card.innerHTML = `
-      <div class='match-teams'><strong>${teamA}</strong><span>vs</span><strong>${teamB}</strong></div>
+      ${renderMatchBanner(teamA, teamB)}
+      <button type='button' class='match-card-select' data-match-id='${m.match_id}'>
+        <div class='match-teams'>
+          <strong>${renderTeamLogo(teamA)} <span>${teamA}</span></strong>
+          <span>vs</span>
+          <strong><span>${teamB}</span> ${renderTeamLogo(teamB)}</strong>
+        </div>
+      </button>
       <div class='muted'>IPL ${m.season_id} · Match ${m.match_number || m.season_match_number || "-"}</div>
       <div class='muted'>${m.match_date || "Date unavailable"} · ${m.venue || "Venue unavailable"}${m.city ? `, ${m.city}` : ""}</div>
       <div class='muted'>Match ID ${m.match_id}</div>
       ${unresolved ? "<div class='muted'>Unresolved team identity for this record.</div>" : ""}
-      <div>Replay this match</div>
+      <div class='row-actions'><button type='button' class='replay-chip' data-match-id='${m.match_id}'>Replay this match</button></div>
     `;
-    card.onclick = async () => {
-      state.selectedMatchId = Number(m.match_id);
-      state.selectedMatch = m;
-      const readable = `${matchTitleFromMeta(m)} · IPL ${m.season_id} · Match ${m.match_number || m.season_match_number || "-"} · Match ID ${m.match_id}`;
-      els.selectedMatchMeta.textContent = readable;
-      renderMatchCards();
-      await loadInnings();
-    };
+    const selectBtn = card.querySelector(".match-card-select");
+    const replayBtn = card.querySelector(".replay-chip");
+    if (selectBtn) {
+      selectBtn.addEventListener("click", () => {
+        selectTimeMachineMatch(m).catch((err) => setStatus(err.message || "Failed to select match", "error"));
+      });
+    }
+    if (replayBtn) {
+      replayBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        jumpToReplayWidgets(m).catch((err) => setStatus(err.message || "Could not start replay.", "error"));
+      });
+    }
     els.matchCards.appendChild(card);
   });
 }
@@ -731,6 +905,8 @@ function renderState(pred) {
   const s = pred.pre_delivery_state;
   const selected = state.selectedMatch;
   const title = selected ? matchTitleFromMeta(selected) : `${teamLabel(s.team_batting, "Team A")} vs ${teamLabel(s.team_bowling, "Team B")}`;
+  const teamA = selected ? teamLabel(selected.team_a, "Team A") : teamLabel(s.team_batting, "Team A");
+  const teamB = selected ? teamLabel(selected.team_b, "Team B") : teamLabel(s.team_bowling, "Team B");
   const matchNumber = selected ? selected.match_number || selected.season_match_number : null;
 
   els.matchTitle.textContent = title;
@@ -752,6 +928,12 @@ function renderState(pred) {
   els.stateRrValue.textContent = snapshot.current_run_rate !== undefined ? String(snapshot.current_run_rate) : "-";
   els.stateReqRrValue.textContent = snapshot.required_run_rate !== undefined && snapshot.required_run_rate !== null ? String(snapshot.required_run_rate) : "-";
   els.statePressureValue.textContent = snapshot.pressure_gap !== undefined && snapshot.pressure_gap !== null ? String(snapshot.pressure_gap) : "-";
+
+  if (els.replayBanner) {
+    const banner = renderMatchBanner(teamA, teamB);
+    els.replayBanner.hidden = !banner;
+    els.replayBanner.innerHTML = banner;
+  }
 
   renderReplayHeaderMetrics();
 }
@@ -810,6 +992,7 @@ async function loadPlayer(name) {
     return;
   }
   setStatus(`Loading player intelligence for ${name}...`);
+  els.playerSearchResults.innerHTML = "";
 
   const suffix = state.sessionId ? `?session_id=${encodeURIComponent(state.sessionId)}` : "";
   const payload = await api.get(`/api/players/${encodeURIComponent(name)}${suffix}`);
@@ -825,15 +1008,15 @@ async function loadPlayer(name) {
   els.playerRole.textContent = `IPL Intelligence · ${payload.player.role_label || "Player"}`;
 
   const photo = payload.player.photo || {};
-  if (photo.kind === "local" && photo.url) {
+  if ((photo.kind === "local" || photo.kind === "remote") && photo.url) {
     els.playerPhoto.hidden = false;
     els.playerPhoto.src = photo.url;
     els.playerPhoto.alt = `${payload.player.name} player image`;
     els.playerAvatar.hidden = true;
     if (photo.asset_type === "photo" && photo.is_verified_photo) {
-      els.playerPhotoMeta.textContent = "Real verified local player photo.";
+      els.playerPhotoMeta.textContent = photo.kind === "remote" ? "Verified original player photo from source." : "Real verified local player photo.";
     } else {
-      els.playerPhotoMeta.textContent = "Local player illustration (not a verified photograph).";
+      els.playerPhotoMeta.textContent = photo.kind === "remote" ? "Player image from source feed." : "Local player illustration (not a verified photograph).";
     }
   } else {
     els.playerPhoto.hidden = true;
@@ -990,9 +1173,21 @@ async function loadPlayer(name) {
 }
 
 function formatAskValue(value) {
+  const maybeStructuredValue = (raw) => {
+    if (typeof raw !== "string") return raw;
+    const text = raw.trim();
+    if (!text || (!["[", "{"].includes(text[0]) || !["]", "}"].includes(text[text.length - 1]))) return raw;
+    try {
+      return JSON.parse(text.replace(/'/g, '"'));
+    } catch {
+      return raw;
+    }
+  };
+
+  value = maybeStructuredValue(value);
   if (value === null || value === undefined) return "No answer available.";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return `<p><strong>${value}</strong></p>`;
+    return `<p>${value}</p>`;
   }
 
   const prettyKey = (key) =>
@@ -1029,11 +1224,16 @@ function formatAskValue(value) {
 
   if (Array.isArray(value)) {
     if (!value.length) return "<p class='muted'>No rows available.</p>";
+    const allScalars = value.every((item) => scalar(maybeStructuredValue(item)) !== null);
+    if (allScalars) {
+      return `<p>${value.map((item) => scalar(maybeStructuredValue(item))).join(", ")}</p>`;
+    }
     return `<ul>${value
       .slice(0, 8)
       .map((item) => {
-        const text = scalar(item);
-        return `<li>${text !== null ? text : formatObject(item)}</li>`;
+        const normalized = maybeStructuredValue(item);
+        const text = scalar(normalized);
+        return `<li>${text !== null ? text : formatObject(normalized)}</li>`;
       })
       .join("")}</ul>`;
   }
@@ -1074,8 +1274,24 @@ function maybePlayerFromAsk(result) {
 function isCleanPlayerName(name) {
   const value = String(name || "").trim();
   if (!value) return false;
-  if (value.startsWith("[") || value.includes("',") || value.includes(", '")) return false;
+  if (value.startsWith("[") || value.endsWith("]") || value.includes("',") || value.includes(", '") || value.includes("[") || value.includes("]")) return false;
   return true;
+}
+
+function normalizePlayerNames(rawName) {
+  const value = String(rawName || "").trim();
+  if (!value) return [];
+  if (value.startsWith("[") && value.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(value.replace(/'/g, '"'));
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [value];
 }
 
 function renderAskResults(payload) {
@@ -1142,7 +1358,19 @@ async function searchPlayers() {
 
   els.playerSearchHint.textContent = "Searching players...";
   const payload = await api.get(`/api/players?query=${encodeURIComponent(q)}&limit=20`);
-  const list = (payload.players || []).filter((item) => isCleanPlayerName(item.player_name));
+  const seen = new Set();
+  const list = (payload.players || [])
+    .flatMap((item) => {
+      const names = normalizePlayerNames(item.player_name);
+      return names.map((player_name) => ({ ...item, player_name }));
+    })
+    .filter((item) => isCleanPlayerName(item.player_name))
+    .filter((item) => {
+      const key = String(item.player_name || "").toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
   if (!list.length) {
     els.playerSearchResults.innerHTML = "";
@@ -1154,12 +1382,16 @@ async function searchPlayers() {
   els.playerSearchResults.innerHTML = "";
   list.forEach((item) => {
     const photo = item.photo || {};
-    const kind = photo.asset_type === "photo" && photo.is_verified_photo ? "photo" : photo.kind === "local" ? "illustration" : "avatar";
+    const kind = photo.kind === "remote" || photo.asset_type === "photo" ? "photo" : photo.kind === "local" ? "illustration" : "avatar";
     const row = document.createElement("button");
     row.type = "button";
     row.className = "search-result";
     row.innerHTML = `<span>${item.player_name}</span><small class='muted'>${kind}</small>`;
-    row.onclick = () => setRoute({ view: "player", player: item.player_name });
+    row.onclick = () => {
+      els.playerSearchResults.innerHTML = "";
+      els.playerSearchHint.textContent = `Showing ${item.player_name}.`;
+      setRoute({ view: "player", player: item.player_name });
+    };
     els.playerSearchResults.appendChild(row);
   });
 }
@@ -1342,9 +1574,19 @@ function syncRoute() {
     }
     if (route.status) {
       els.fixturesStatusSelect.value = String(route.status);
+    } else {
+      els.fixturesStatusSelect.value = "";
     }
+    if (route.team) {
+      els.fixturesTeamInput.value = String(route.team);
+    } else {
+      els.fixturesTeamInput.value = "";
+    }
+    state.selectedFixtureMatchId = route.matchId ? Number(route.matchId) : null;
     if (route.matchId) {
       loadFixtureDetail(Number(route.matchId)).catch((err) => setStatus(err.message || "Failed to load match details", "error"));
+    } else {
+      els.fixtureDetail.innerHTML = "Click a match card to inspect match details.";
     }
     loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error"));
     return;
@@ -1397,10 +1639,17 @@ function attachEvents() {
 
   els.askSubmitBtn.addEventListener("click", () => runAsk().catch((err) => setStatus(err.message || "Ask failed.", "error")));
 
-  els.fixturesRefreshBtn.addEventListener("click", () => loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error")));
-  els.fixturesSeasonSelect.addEventListener("change", () => loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error")));
-  els.fixturesStatusSelect.addEventListener("change", () => loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error")));
-  els.fixturesTeamInput.addEventListener("input", () => loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error")));
+  const debouncedFixturesRoute = (() => {
+    let timer = null;
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => setRoute(fixturesRoute()), 180);
+    };
+  })();
+  els.fixturesRefreshBtn.addEventListener("click", () => setRoute(fixturesRoute(state.selectedFixtureMatchId || "")));
+  els.fixturesSeasonSelect.addEventListener("change", () => setRoute(fixturesRoute()));
+  els.fixturesStatusSelect.addEventListener("change", () => setRoute(fixturesRoute()));
+  els.fixturesTeamInput.addEventListener("input", debouncedFixturesRoute);
   els.teamLoadBtn.addEventListener("click", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
   els.teamsSelect.addEventListener("change", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
   els.teamSeasonSelect.addEventListener("change", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
@@ -1427,7 +1676,13 @@ function attachEvents() {
     }
   });
   els.matchSearchInput.addEventListener("input", renderMatchCards);
-  els.teamFilterSelect.addEventListener("change", renderMatchCards);
+  els.teamFilterSelect.addEventListener("change", () => {
+    renderMatchCards();
+    if (!(els.teamFilterSelect.value || "").trim()) return;
+    const firstMatch = filteredMatches()[0];
+    if (!firstMatch) return;
+    jumpToReplayWidgets(firstMatch).catch((err) => setStatus(err.message || "Could not start replay.", "error"));
+  });
   els.inningsSelect.addEventListener("change", () => {
     const innings = Number(els.inningsSelect.value);
     state.selectedInnings = state.innings.find((x) => Number(x.innings) === innings) || null;
@@ -1447,7 +1702,10 @@ function attachEvents() {
 
   els.backToReplayBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
   els.exploreReplayBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
-  els.closePlayerBtn.addEventListener("click", () => setRoute({ view: "time_machine" }));
+  els.closePlayerBtn.addEventListener("click", () => {
+    state.activePlayer = null;
+    setRoute({ view: "player", player: "" });
+  });
 
   els.playerSearchBtn.addEventListener("click", () => searchPlayers().catch((err) => setStatus(err.message || "Player search failed.", "error")));
   els.playerSearchInput.addEventListener("keydown", (event) => {

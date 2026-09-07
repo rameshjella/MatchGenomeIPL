@@ -82,8 +82,8 @@
 
       <section id="fixturesView" class="view" hidden>
         <section class="hero-card">
-          <h2>Fixtures and Results</h2>
-          <p class="muted">Unified match listing. Click any match to inspect details and open it in Time Machine.</p>
+          <h2>Fixtures</h2>
+          <p class="muted">Unified fixtures/results listing. Click any match to open full match details and jump into Time Machine when needed.</p>
           <div class="search-row fixtures-search-row">
             <select id="fixturesSeasonSelect"></select>
             <input id="fixturesTeamInput" type="search" placeholder="Filter team" />
@@ -96,14 +96,14 @@
             <button id="fixturesRefreshBtn" type="button">Refresh</button>
           </div>
           <div id="fixturesList" class="panel-block">Fixtures will appear here.</div>
-          <div id="fixtureDetail" class="panel-block">Click a match card to inspect match details.</div>
+          <div id="fixtureDetail" class="panel-block" tabindex="-1">Click a match card to inspect match details.</div>
         </section>
       </section>
 
       <section id="teamsView" class="view" hidden>
         <section class="hero-card">
           <h2>Teams</h2>
-          <p class="muted">Team overview plus season-specific leadership where verified data exists.</p>
+          <p class="muted">Team overview, season leadership, and full squad contribution details.</p>
           <div class="search-row">
             <select id="teamsSelect"></select>
             <select id="teamSeasonSelect"></select>
@@ -133,10 +133,12 @@
             <h3>Match Discovery</h3>
             <p class="muted">Find a real IPL match by season, team, date, player, or match number.</p>
             <p id="teamDataNotice" class="muted" hidden></p>
-            <label>Season <select id="seasonSelect"></select></label>
-            <label>Find match <input id="matchSearchInput" type="search" placeholder="Search teams, venue, date, match ID" /></label>
-            <label>Filter team <select id="teamFilterSelect"><option value="">All teams</option></select></label>
-            <label>Innings <select id="inningsSelect"></select></label>
+            <div class="discovery-controls">
+              <label>Season <select id="seasonSelect"></select></label>
+              <label>Find match <input id="matchSearchInput" type="search" placeholder="Search teams, venue, date, match ID" /></label>
+              <label>Filter team <select id="teamFilterSelect"><option value="">All teams</option></select></label>
+              <label>Innings <select id="inningsSelect"></select></label>
+            </div>
             <p id="matchListSummary" class="muted"></p>
             <p id="selectedMatchMeta" class="muted">Select a match card to continue.</p>
             <div id="matchCards" class="match-cards" role="list" aria-label="Match cards"></div>
@@ -146,6 +148,7 @@
           <section id="replayPanel" class="workspace-pane" hidden>
             <header class="workspace-header">
               <h3 id="matchTitle">Replay Workspace</h3>
+              <div id="replayBanner" hidden></div>
               <p id="matchSubline" class="muted">Select a match to begin.</p>
               <p id="replayTeamNotice" class="muted" hidden></p>
               <div class="header-metrics">

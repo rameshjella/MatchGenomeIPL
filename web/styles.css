@@ -23,18 +23,18 @@ body {
   font-family: "Inter", "Segoe UI", Arial, sans-serif;
   line-height: 1.45;
   min-height: 100vh;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .app {
   max-width: 1480px;
   margin: 0 auto;
-  padding: 14px;
+  padding: 12px;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 10px;
-  height: 100vh;
-  min-height: 0;
+  gap: 8px;
+  min-height: 100vh;
+  height: auto;
 }
 
 .top-shell,
@@ -49,15 +49,15 @@ body {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 12px;
+  padding: 9px;
 }
 
 .top-shell {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
-  padding: 12px 14px;
+  padding: 10px 12px;
 }
 
 .brand-block h1 {
@@ -93,7 +93,7 @@ body {
 
 .view {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
   overflow: auto;
 }
@@ -209,7 +209,7 @@ button:disabled {
 .time-machine-layout,
 .player-layout {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-height: 0;
 }
 
@@ -238,8 +238,8 @@ button:disabled {
 }
 
 .time-machine-layout {
-  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
-  height: 100%;
+  grid-template-columns: 1fr;
+  align-content: start;
 }
 
 .player-layout {
@@ -251,46 +251,57 @@ button:disabled {
 .player-search-pane,
 .player-profile-pane {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   min-height: 0;
 }
 
 .discovery-pane {
-  grid-template-rows: auto auto auto auto auto auto auto minmax(0, 1fr) auto;
-  overflow: hidden;
+  overflow: visible;
+}
+
+.discovery-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.discovery-controls input,
+.discovery-controls select {
+  padding: 8px;
 }
 
 .player-search-pane {
-  grid-template-rows: auto auto auto auto minmax(0, 1fr);
-  overflow: auto;
+  overflow: visible;
 }
 
 .workspace-pane,
 .player-profile-pane,
 .ask-results {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .hero-card,
 .ask-results {
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 
 .workspace-pane {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: start;
 }
 
 #askInput {
-  min-height: 132px;
+  min-height: 220px;
+  width: 100%;
 }
 
 .match-cards {
   display: grid;
   gap: 8px;
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 
 .match-card {
@@ -301,6 +312,18 @@ button:disabled {
   text-align: left;
   display: grid;
   gap: 6px;
+}
+
+.match-card-select {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+
+.replay-chip,
+.fixture-open-chip {
+  background: var(--surface-muted);
 }
 
 .match-card.active {
@@ -315,18 +338,82 @@ button:disabled {
   font-weight: 600;
 }
 
+.match-teams strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.team-logo-shell {
+  display: inline-grid;
+  place-items: center;
+}
+
+.team-logo-fallback {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.65rem;
+  background: #1b2542;
+  border: 1px solid var(--line);
+}
+
+.team-banner {
+  width: 100%;
+  max-height: 86px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+.team-banner-shell {
+  width: 100%;
+}
+
+.team-banner-fallback {
+  width: 100%;
+  min-height: 56px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: linear-gradient(120deg, #1e2f57, #223868, #182749);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-weight: 600;
+  color: #d8e3ff;
+  padding: 8px;
+}
+
+#replayBanner {
+  min-height: 0;
+}
+
+.fixture-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .workspace-header {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   border-bottom: 1px solid var(--line);
-  padding-bottom: 10px;
+  padding-bottom: 8px;
   min-width: 0;
 }
 
 .header-metrics {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px;
 }
 
 .header-metrics div,
@@ -346,7 +433,7 @@ button:disabled {
 
 .workspace-tabs {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -356,9 +443,9 @@ button:disabled {
 
 .workspace-panel {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 
 #panelPrediction {
@@ -371,7 +458,7 @@ button:disabled {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 12px;
+  padding: 10px;
   display: grid;
   gap: 10px;
   min-width: 0;
@@ -432,7 +519,7 @@ button:disabled {
 .title-row,
 .timeline-header {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
@@ -447,7 +534,7 @@ button:disabled {
 .actual-block {
   border: 1px dashed var(--line);
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px;
   min-height: 150px;
 }
 
@@ -548,10 +635,10 @@ button:disabled {
 }
 
 .search-results {
-  max-height: 300px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   display: grid;
-  gap: 7px;
+  gap: 6px;
 }
 
 .search-result {
@@ -563,7 +650,7 @@ button:disabled {
 
 .search-result > span,
 .search-result > small {
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .search-result > span {
@@ -590,7 +677,7 @@ button:disabled {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 12px;
+  padding: 10px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 12px;
@@ -601,12 +688,17 @@ button:disabled {
 }
 
 .player-tabs {
-  margin: 2px 0;
+  margin: 0;
 }
 
 .fixture-card {
   width: 100%;
   text-align: left;
+  cursor: pointer;
+}
+
+.fixture-card.active {
+  border-color: var(--primary);
 }
 
 .player-profile-pane #playerPanel {
@@ -619,7 +711,7 @@ button:disabled {
   display: grid;
   gap: 10px;
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 
 .stats-grid {
@@ -700,11 +792,15 @@ button:disabled {
   }
 
   .time-machine-layout {
-    grid-template-rows: minmax(240px, auto) minmax(0, 1fr);
+    grid-template-rows: auto;
   }
 
   .header-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .discovery-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -754,6 +850,14 @@ button:disabled {
   }
 
   .search-row {
+    grid-template-columns: 1fr;
+  }
+
+  .discovery-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .fixture-detail-grid {
     grid-template-columns: 1fr;
   }
 }

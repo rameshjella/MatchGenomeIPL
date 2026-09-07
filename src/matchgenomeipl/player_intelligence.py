@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 import sqlite3
 from typing import Any
+from urllib.parse import urlparse
 
 from .constants import NON_BOWLER_WICKETS
 
@@ -116,6 +117,20 @@ def _photo_payload(conn: sqlite3.Connection, player_name: str) -> dict[str, Any]
                 "source_url": row["source_url"],
                 "license": row["license"],
                 "asset_type": str(row["asset_type"] or "illustration"),
+                "is_verified_photo": bool(row["is_verified_photo"]),
+                "attribution": row["attribution"],
+                "verification_status": row["verification_status"],
+            }
+        source_url = str(row["source_url"] or "").strip()
+        parsed_path = urlparse(source_url).path.lower() if source_url else ""
+        if source_url and parsed_path.endswith((".jpg", ".jpeg", ".png", ".webp", ".avif")):
+            return {
+                "kind": "remote",
+                "url": source_url,
+                "source": str(row["source_reference"] or "player_asset"),
+                "source_url": source_url,
+                "license": row["license"],
+                "asset_type": str(row["asset_type"] or "photo"),
                 "is_verified_photo": bool(row["is_verified_photo"]),
                 "attribution": row["attribution"],
                 "verification_status": row["verification_status"],

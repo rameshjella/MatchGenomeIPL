@@ -20,6 +20,9 @@ class TimeMachineAPI:
     def get_match(self, match_id: int) -> dict[str, Any]:
         return self.service.get_match(match_id)
 
+    def get_match_scorecard(self, match_id: int) -> dict[str, Any]:
+        return self.service.get_match_scorecard(match_id)
+
     def get_fixtures(self, season_id: int | None = None, team: str | None = None, status: str | None = None) -> dict[str, Any]:
         return {
             "season_id": season_id,

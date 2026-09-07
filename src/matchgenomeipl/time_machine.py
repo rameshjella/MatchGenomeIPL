@@ -314,11 +314,56 @@ class TimeMachineService:
             raise ValueError("team not found")
         season = team_season_info(self.conn, team_name, season_id) if isinstance(season_id, int) else None
 
-        squad_params: list[Any] = [team_name, team_name]
+        aliases: set[str] = {team_name}
+        if row["historical_name"]:
+            aliases.add(str(row["historical_name"]))
+        alias_rows = self._fetchall(
+            "get_team_aliases_for_squad",
+            """
+            SELECT DISTINCT ta.alias_name
+            FROM team_alias ta
+            JOIN team_identity ti ON ti.team_identity_id = ta.team_identity_id
+            WHERE ti.current_canonical_name = ? OR ti.historical_display_name = ?
+            """,
+            (team_name, team_name),
+        )
+        for alias_row in alias_rows:
+            alias = str(alias_row["alias_name"] or "").strip()
+            if alias:
+                aliases.add(alias)
+
+        if aliases:
+            placeholders = ",".join("?" for _ in aliases)
+            code_rows = self._fetchall(
+                "get_team_internal_codes_for_squad",
+                f"""
+                SELECT DISTINCT internal_team_code
+                FROM match_team_map
+                WHERE historical_display_name IN ({placeholders})
+                """,
+                tuple(sorted(aliases)),
+            )
+            for code_row in code_rows:
+                code = str(code_row["internal_team_code"] or "").strip()
+                if code:
+                    aliases.add(code)
+
+        squad_keys = sorted(aliases)
+        placeholders = ",".join("?" for _ in squad_keys)
+        squad_params: list[Any] = [*squad_keys, *squad_keys, *squad_keys, *squad_keys]
         season_sql = ""
         if isinstance(season_id, int):
             season_sql = " AND d.season_id = ?"
-            squad_params = [team_name, season_id, team_name, season_id]
+            squad_params = [
+                *squad_keys,
+                season_id,
+                *squad_keys,
+                season_id,
+                *squad_keys,
+                season_id,
+                *squad_keys,
+                season_id,
+            ]
         squad_rows = self._fetchall(
             "get_team_squad",
             f"""
@@ -328,7 +373,7 @@ class TimeMachineService:
                        SUM(d.batter_runs) AS runs,
                        0 AS wickets
                 FROM deliveries d
-                WHERE d.team_batting = ? {season_sql}
+                WHERE d.team_batting IN ({placeholders}) {season_sql}
                 GROUP BY d.batter
                 UNION ALL
                 SELECT d.bowler AS player,
@@ -336,17 +381,34 @@ class TimeMachineService:
                        0 AS runs,
                        SUM(CASE WHEN d.is_wicket = 1 THEN 1 ELSE 0 END) AS wickets
                 FROM deliveries d
-                WHERE d.team_bowling = ? {season_sql}
+                WHERE d.team_bowling IN ({placeholders}) {season_sql}
                 GROUP BY d.bowler
+            ),
+            match_participation AS (
+                SELECT p.player,
+                       COUNT(DISTINCT p.match_id) AS matches,
+                       COUNT(DISTINCT (CAST(p.match_id AS TEXT) || '-' || CAST(p.innings AS TEXT))) AS innings
+                FROM (
+                    SELECT d.batter AS player, d.match_id, d.innings
+                    FROM deliveries d
+                    WHERE d.team_batting IN ({placeholders}) {season_sql}
+                    UNION
+                    SELECT d.bowler AS player, d.match_id, d.innings
+                    FROM deliveries d
+                    WHERE d.team_bowling IN ({placeholders}) {season_sql}
+                ) p
+                GROUP BY p.player
             )
-            SELECT player,
-                   SUM(balls_faced) AS balls,
-                   SUM(runs) AS runs,
-                   SUM(wickets) AS wickets
-            FROM touches
-            GROUP BY player
-            ORDER BY balls DESC, runs DESC, wickets DESC, player
-            LIMIT 30
+            SELECT t.player,
+                   SUM(t.balls_faced) AS balls,
+                   SUM(t.runs) AS runs,
+                   SUM(t.wickets) AS wickets,
+                   COALESCE(mp.matches, 0) AS matches,
+                   COALESCE(mp.innings, 0) AS innings
+            FROM touches t
+            LEFT JOIN match_participation mp ON mp.player = t.player
+            GROUP BY t.player
+            ORDER BY balls DESC, runs DESC, wickets DESC, t.player
             """,
             tuple(squad_params),
         )
@@ -370,6 +432,8 @@ class TimeMachineService:
                     "balls": int(r["balls"]),
                     "runs": int(r["runs"]),
                     "wickets": int(r["wickets"]),
+                    "matches": int(r["matches"]),
+                    "innings": int(r["innings"]),
                 }
                 for r in squad_rows
             ],
@@ -407,6 +471,11 @@ class TimeMachineService:
         if row is None:
             return raw
         return str(row["historical_display_name"])
+
+    @staticmethod
+    def _overs_notation(legal_balls: int) -> str:
+        balls = int(legal_balls or 0)
+        return f"{balls // 6}.{balls % 6}"
 
     def list_seasons(self) -> list[dict[str, Any]]:
         rows = self._fetchall(
@@ -548,6 +617,125 @@ class TimeMachineService:
                     "player_of_match": meta["player_of_match"] if meta else None,
                 },
             },
+        }
+
+    def get_match_scorecard(self, match_id: int) -> dict[str, Any]:
+        match_payload = self.get_match(match_id)
+        innings_payload = self.list_innings(match_id)
+
+        batting_rows = self._fetchall(
+            "get_match_scorecard_batting",
+            """
+            SELECT
+                innings,
+                batter AS player,
+                SUM(batter_runs) AS runs,
+                SUM(CASE WHEN is_wide_ball = 0 THEN 1 ELSE 0 END) AS balls,
+                SUM(CASE WHEN batter_runs = 4 THEN 1 ELSE 0 END) AS fours,
+                SUM(CASE WHEN batter_runs = 6 THEN 1 ELSE 0 END) AS sixes,
+                SUM(CASE WHEN is_wicket = 1 AND player_out = batter THEN 1 ELSE 0 END) AS dismissals
+            FROM deliveries
+            WHERE match_id = ?
+            GROUP BY innings, batter
+            ORDER BY innings, runs DESC, balls ASC, batter
+            """,
+            (match_id,),
+        )
+        bowling_rows = self._fetchall(
+            "get_match_scorecard_bowling",
+            """
+            SELECT
+                innings,
+                bowler AS player,
+                SUM(legal_ball) AS legal_balls,
+                SUM(total_runs - bye_runs - leg_bye_runs) AS runs_conceded,
+                SUM(CASE WHEN is_wicket = 1 THEN 1 ELSE 0 END) AS wickets,
+                SUM(CASE WHEN total_runs = 0 THEN 1 ELSE 0 END) AS dots
+            FROM deliveries
+            WHERE match_id = ?
+            GROUP BY innings, bowler
+            ORDER BY innings, wickets DESC, legal_balls DESC, bowler
+            """,
+            (match_id,),
+        )
+
+        innings_scorecard: dict[int, dict[str, Any]] = {}
+        for item in innings_payload:
+            innings_no = int(item["innings"])
+            innings_scorecard[innings_no] = {
+                "innings": innings_no,
+                "batting_team": item["team_batting"],
+                "bowling_team": item["team_bowling"],
+                "score": {
+                    "runs": int(item["runs"]),
+                    "wickets": int(item["wickets"]),
+                    "legal_balls": int(item["legal_balls"]),
+                    "overs": self._overs_notation(int(item["legal_balls"])),
+                },
+                "batting": [],
+                "bowling": [],
+            }
+
+        for row in batting_rows:
+            innings_no = int(row["innings"])
+            if innings_no not in innings_scorecard:
+                continue
+            balls = int(row["balls"])
+            runs = int(row["runs"])
+            strike_rate = round((runs * 100.0) / balls, 2) if balls > 0 else 0.0
+            innings_scorecard[innings_no]["batting"].append(
+                {
+                    "player": str(row["player"]),
+                    "runs": runs,
+                    "balls": balls,
+                    "fours": int(row["fours"]),
+                    "sixes": int(row["sixes"]),
+                    "strike_rate": strike_rate,
+                    "status": "out" if int(row["dismissals"] or 0) > 0 else "not out",
+                }
+            )
+
+        for row in bowling_rows:
+            innings_no = int(row["innings"])
+            if innings_no not in innings_scorecard:
+                continue
+            legal_balls = int(row["legal_balls"])
+            conceded = int(row["runs_conceded"])
+            economy = round((conceded * 6.0) / legal_balls, 2) if legal_balls > 0 else 0.0
+            innings_scorecard[innings_no]["bowling"].append(
+                {
+                    "player": str(row["player"]),
+                    "overs": self._overs_notation(legal_balls),
+                    "runs_conceded": conceded,
+                    "wickets": int(row["wickets"]),
+                    "dot_balls": int(row["dots"]),
+                    "economy": economy,
+                }
+            )
+
+        meta = match_payload.get("metadata", {})
+        outcome = meta.get("outcome", {}) if isinstance(meta, dict) else {}
+        result_line = outcome.get("winner") if isinstance(outcome, dict) else None
+        summary = {
+            "match_id": int(match_payload["match_id"]),
+            "season_id": int(match_payload["season_id"]),
+            "match_number": meta.get("match_number") if isinstance(meta, dict) else None,
+            "match_date": meta.get("match_date") if isinstance(meta, dict) else None,
+            "venue": meta.get("venue") if isinstance(meta, dict) else None,
+            "city": meta.get("city") if isinstance(meta, dict) else None,
+            "teams": {
+                "team_a": meta.get("team_a_display") if isinstance(meta, dict) else None,
+                "team_b": meta.get("team_b_display") if isinstance(meta, dict) else None,
+            },
+            "toss": meta.get("toss", {}) if isinstance(meta, dict) else {},
+            "outcome": outcome,
+            "result_text": f"{result_line} won" if result_line else "Result pending",
+        }
+
+        return {
+            "match_id": int(match_payload["match_id"]),
+            "summary": summary,
+            "innings": [innings_scorecard[key] for key in sorted(innings_scorecard)],
         }
 
     def list_innings(self, match_id: int) -> list[dict[str, Any]]:
