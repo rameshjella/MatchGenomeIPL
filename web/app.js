@@ -7,6 +7,8 @@ const UiState = {
   ERROR: "ERROR",
 };
 
+let revealObserver = null;
+
 const api = {
   async get(path) {
     const res = await fetch(path, { headers: { Accept: "application/json" } });
@@ -50,6 +52,8 @@ const state = {
   teams: [],
   teamAssetIndex: {},
   selectedFixtureMatchId: null,
+  askContextQuestion: "",
+  contextOrigin: "",
 };
 
 const els = {
@@ -81,7 +85,10 @@ const els = {
   homeUpcoming: document.getElementById("homeUpcoming"),
   homeLatest: document.getElementById("homeLatest"),
   homeSeasonStatus: document.getElementById("homeSeasonStatus"),
+  homeSeasonTag: document.getElementById("homeSeasonTag"),
+  homeDataStatement: document.getElementById("homeDataStatement"),
   homeSignals: document.getElementById("homeSignals"),
+  homeGenomePath: document.getElementById("homeGenomePath"),
   homeReplaySeasonSelect: document.getElementById("homeReplaySeasonSelect"),
   homeReplayBtn: document.getElementById("homeReplayBtn"),
   homeAskPrompts: document.getElementById("homeAskPrompts"),
@@ -245,7 +252,18 @@ function parseRoute() {
     matchId: params.get("match_id") || "",
     status: params.get("status") || "",
     team: params.get("team") || "",
+    origin: params.get("origin") || "",
+    question: params.get("question") || "",
   };
+}
+
+function humanTrustLabel(overallTrust) {
+  if (overallTrust === "TRUSTED_OFFICIAL_RECONCILED") return "Official reference reconciled";
+  if (overallTrust === "TRUSTED_INTERNAL_WITH_DEFINITION_NOTE") return "Internally validated · official reference reconciled with definition note";
+  if (overallTrust === "TRUSTED_INTERNAL") return "Internally validated";
+  if (overallTrust === "REFERENCE_LIMITED") return "Internally validated · independent official reference unavailable";
+  if (overallTrust === "UNTRUSTED") return "Untrusted";
+  return "Internally validated";
 }
 
 function setRoute(route) {
@@ -348,6 +366,44 @@ function setView(view) {
     if (!button) return;
     button.classList.toggle("primary", active);
     button.setAttribute("aria-current", active ? "page" : "false");
+  });
+
+  installRevealForView(view);
+}
+
+function installRevealForView(view) {
+  if (!window.IntersectionObserver) return;
+  if (revealObserver) {
+    revealObserver.disconnect();
+  }
+  const root = {
+    home: els.homeView,
+    ask: els.askView,
+    matches: els.fixturesView,
+    teams: els.teamsView,
+    stats: els.statsView,
+    replay: els.timeMachineView,
+    player: els.playerView,
+    predict: els.predictView,
+  }[view];
+  if (!root) return;
+
+  const nodes = root.querySelectorAll(".reveal-step");
+  revealObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("visible");
+          revealObserver.unobserve(entry.target);
+        }
+      });
+    },
+    { threshold: 0.08, rootMargin: "0px 0px -8% 0px" },
+  );
+
+  nodes.forEach((node) => {
+    node.classList.add("is-reveal");
+    revealObserver.observe(node);
   });
 }
 
@@ -481,6 +537,9 @@ async function loadFixtureDetail(matchId) {
   const meta = match.metadata || {};
   const outcome = meta.outcome || {};
   const toss = meta.toss || {};
+  const askContext = state.contextOrigin === "ask" && state.askContextQuestion
+    ? `<p class='muted'>Context: reached from Ask - "${escapeHtml(state.askContextQuestion)}"</p>`
+    : "";
   const inningsRows = (innings.innings || [])
     .map((item) => `<li>Innings ${item.innings}: ${teamLabel(item.team_batting, "Team")} ${item.runs}/${item.wickets} in ${toOverNotation(item.legal_balls)} overs</li>`)
     .join("");
@@ -492,24 +551,31 @@ async function loadFixtureDetail(matchId) {
       .join("")}</tbody></table></div>`;
   };
   els.fixtureDetail.innerHTML = `
+    <p class='eyebrow'>MATCH EVENT</p>
     <h4>${teamLabel(meta.team_a_display, "Team A")} vs ${teamLabel(meta.team_b_display, "Team B")}</h4>
     <p class='muted'>IPL ${match.season_id} · Match ${meta.match_number || "-"} · ${meta.match_date || "Date unknown"}</p>
     <p>${meta.venue || "Venue unknown"}${meta.city ? `, ${meta.city}` : ""}</p>
+    ${askContext}
+    <div class='event-rail'>
+      <p><span>Toss</span><strong>${teamLabel(toss.winner, "Unknown")} ${toss.decision ? `(${toss.decision})` : ""}</strong></p>
+      <p><span>Pressure</span><strong>${outcome.result_margin ? String(outcome.result_margin) : "Pending"}</strong></p>
+      <p><span>Outcome</span><strong>${teamLabel(outcome.winner, "Pending")}</strong></p>
+    </div>
     <div class='fixture-detail-grid'>
       <div class='panel-block'>
-        <h5>Summary</h5>
+        <h5>Match narrative</h5>
         <p>Toss: ${teamLabel(toss.winner, "Unknown")} (${toss.decision || "-"})</p>
         <p>Result: ${teamLabel(outcome.winner, "Pending")} ${outcome.result_margin ? `by ${outcome.result_margin} ${outcome.result_type || ""}` : ""}</p>
         <p>Player of match: ${outcome.player_of_match || "-"}</p>
         <ul>${inningsRows || "<li>No innings data found.</li>"}</ul>
       </div>
       <div class='panel-block'>
-        <h5>Scorecard</h5>
+        <h5>Evidence layers</h5>
         ${inningsScorecard.length
           ? inningsScorecard
               .map(
                 (item) => `
-            <details ${Number(item.innings) === 1 ? "open" : ""}>
+            <details class='detail-drawer' ${Number(item.innings) === 1 ? "open" : ""}>
               <summary>Innings ${item.innings} · ${teamLabel(item.batting_team, "Team")} ${item.score?.runs || 0}/${item.score?.wickets || 0} (${item.score?.overs || "0.0"} ov)</summary>
               <p class='muted'>${teamLabel(item.batting_team, "Team A")} batting vs ${teamLabel(item.bowling_team, "Team B")} bowling</p>
               <h6>Batting</h6>
@@ -594,21 +660,50 @@ async function loadTeamDetails() {
   const trustLabel = trust === "verified" ? "Verified" : trust === "provisional" ? "Provisional" : "Reference unavailable";
   const sourceLabel = seasonInfo.source || info.source || "Local knowledge layer";
   const trustNote = trust === "verified" ? "Leadership from verified season knowledge." : "Verified leadership is not currently available for this season.";
+  const askContext = state.contextOrigin === "ask" && state.askContextQuestion
+    ? `<p class='muted'>Context: reached from Ask - "${escapeHtml(state.askContextQuestion)}"</p>`
+    : "";
+
+  const squadTop = squad.slice(0, 6);
+  const seasonTrail = state.seasons
+    .slice(-6)
+    .map((s) => `<button type='button' class='season-trail-step ${Number(s.season_id) === season ? "active" : ""}' data-season='${s.season_id}'>${s.season_id}</button>`)
+    .join("");
+
   els.teamDetails.innerHTML = `
+    <p class='eyebrow'>TEAM -> SEASON -> LEADERSHIP -> PERFORMANCE</p>
     <div class='title-row'>
-      <p><strong>${info.name || team}</strong></p>
+      <p><strong>${info.name || team}</strong> · Season ${season}</p>
       <span class='trust-chip'>${trustLabel}</span>
     </div>
-    <p class='muted'>Season ${season} · ${info.short_name || "-"} · Home venue ${info.home_venue || "Not available"}</p>
+    <p class='muted'>${info.short_name || "-"} · Home venue ${info.home_venue || "Not available"}</p>
+    ${askContext}
+    <div class='event-rail'>
+      <p><span>Captain</span><strong>${leader.captain}</strong></p>
+      <p><span>Coach</span><strong>${leader.coach}</strong></p>
+      <p><span>Source</span><strong>${sourceLabel}</strong></p>
+    </div>
+    <div class='season-trail'>${seasonTrail}</div>
     <div class='stats-grid'>
-      <div><span>Captain</span><strong>${leader.captain}</strong></div>
-      <div><span>Coach</span><strong>${leader.coach}</strong></div>
-      <div><span>Owner</span><strong>${leader.owner}</strong></div>
+      <div><span>Leadership</span><strong>Captain: ${leader.captain}</strong></div>
+      <div><span>Coaching</span><strong>${leader.coach}</strong></div>
+      <div><span>Ownership</span><strong>${leader.owner}</strong></div>
       <div><span>Source</span><strong>${sourceLabel}</strong></div>
     </div>
     <p class='muted'>${trustNote}</p>
-    <h4>Squad contribution snapshot</h4>
-    ${squad.length
+    <h4>Squad signals</h4>
+    <div class='entity-row'>
+      ${squadTop.length
+        ? squadTop
+            .map(
+              (row) => `<button type='button' class='entity-chip inline-player' data-player='${row.player || ""}'><span>${row.player || "-"}</span><strong>${metricDisplay(row.runs)}R · ${metricDisplay(row.wickets)}W</strong></button>`,
+            )
+            .join("")
+        : "<p class='muted'>No squad sample for this season/team.</p>"}
+    </div>
+    <details class='detail-drawer'>
+      <summary>Open full squad table</summary>
+      ${squad.length
       ? `<div class='table-wrap'><table class='mini-table'><thead><tr><th>Player</th><th>Matches</th><th>Innings</th><th>Balls</th><th>Runs</th><th>Wickets</th></tr></thead><tbody>${squad
           .map(
             (row) =>
@@ -616,7 +711,16 @@ async function loadTeamDetails() {
           )
           .join("")}</tbody></table></div>`
       : "<p class='muted'>No squad sample for this season/team.</p>"}
+    </details>
   `;
+  els.teamDetails.querySelectorAll(".season-trail-step").forEach((button) => {
+    button.addEventListener("click", () => {
+      const seasonValue = Number(button.getAttribute("data-season") || 0);
+      if (!seasonValue) return;
+      els.teamSeasonSelect.value = String(seasonValue);
+      loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error"));
+    });
+  });
   els.teamDetails.querySelectorAll(".inline-player").forEach((button) => {
     button.addEventListener("click", () => {
       const player = button.getAttribute("data-player");
@@ -638,25 +742,26 @@ async function loadStatsWorkspace() {
   const cov = overview.coverage || {};
   const trust = cov.trust_dimensions || {};
   const overallTrust = trust.overall_trust || "UNTRUSTED";
-  const trustLabel = {
-    TRUSTED_OFFICIAL_RECONCILED: "Officially reconciled",
-    TRUSTED_INTERNAL_WITH_DEFINITION_NOTE: "Officially reconciled with definition note",
-    TRUSTED_INTERNAL: "Internally validated",
-    REFERENCE_LIMITED: "Reference limited",
-    UNTRUSTED: "Untrusted",
-  }[overallTrust] || "Internally validated";
+  const trustLabel = humanTrustLabel(overallTrust);
   const coverageFlag = cov.metadata_matches && cov.deliveries_matches && cov.metadata_matches >= cov.deliveries_matches ? "High" : "Partial";
   const renderBoard = (title, rows, qualifier = "") => `
-    <article class='panel-block'>
+    <article class='metric-rail'>
       <h5>${title}</h5>
       ${qualifier ? `<p class='muted'>Qualification: ${qualifier}</p>` : ""}
-      <ol>${(rows || []).slice(0, 8).map((r) => `<li>${r.player}: <strong>${metricDisplay(r.value)}</strong></li>`).join("") || "<li class='muted'>No verified data.</li>"}</ol>
+      <ol class='rank-rail'>${(rows || []).slice(0, 8).map((r) => `<li><span>${r.player}</span><strong>${metricDisplay(r.value)}</strong></li>`).join("") || "<li class='muted'>No verified data.</li>"}</ol>
     </article>
   `;
 
   els.statsOverviewBlock.innerHTML = `
-    <h4>Season ${season} Trust Snapshot</h4>
+    <p class='eyebrow'>SEASON ${season}</p>
+    <h4>Pattern overview</h4>
     <p class='muted'>${trustLabel}. ${trust.trust_statement || ""}</p>
+    <div class='event-rail'>
+      <p><span>Matches</span><strong>${metricDisplay(overview.matches)}</strong></p>
+      <p><span>Runs</span><strong>${metricDisplay(overview.runs)}</strong></p>
+      <p><span>Wickets</span><strong>${metricDisplay(overview.wickets)}</strong></p>
+      <p><span>Dot ball %</span><strong>${metricDisplay(overview.dot_ball_percentage)}%</strong></p>
+    </div>
     <div class='stats-grid'>
       <div><span>Matches</span><strong>${metricDisplay(overview.matches)}</strong></div>
       <div><span>Innings</span><strong>${metricDisplay(overview.innings)}</strong></div>
@@ -673,7 +778,7 @@ async function loadStatsWorkspace() {
 
   els.statsBattingBlock.innerHTML = `
     <h4>Batting Leaderboards</h4>
-    <div class='launch-grid'>
+    <div class='intelligence-columns'>
       ${renderBoard("Orange Cap (Runs)", lb.orange_cap_runs)}
       ${renderBoard("Most Sixes", lb.most_sixes)}
       ${renderBoard("Most Fours", lb.most_fours)}
@@ -683,12 +788,12 @@ async function loadStatsWorkspace() {
 
   els.statsBowlingBlock.innerHTML = `
     <h4>Bowling Leaderboards</h4>
-    <div class='launch-grid'>
+    <div class='intelligence-columns'>
       ${renderBoard("Purple Cap (Wickets)", lb.purple_cap_wickets)}
       ${renderBoard("Best Economy", lb.best_economy, board.qualification?.best_economy || "")}
-      <article class='panel-block'>
+      <article class='metric-rail'>
         <h5>Current Top Bowlers Signal</h5>
-        <ol>${(top.top_performers?.wickets || []).map((r) => `<li>${r.player}: <strong>${r.value}</strong></li>`).join("") || "<li class='muted'>No verified data.</li>"}</ol>
+        <ol class='rank-rail'>${(top.top_performers?.wickets || []).map((r) => `<li><span>${r.player}</span><strong>${r.value}</strong></li>`).join("") || "<li class='muted'>No verified data.</li>"}</ol>
       </article>
     </div>
   `;
@@ -733,11 +838,18 @@ async function loadHomeLaunchpad() {
   const topWicket = (((topPayload.top_performers || {}).wickets || [])[0]) || null;
   const coverage = overviewPayload.coverage || {};
   const trust = coverage.trust_dimensions || {};
+  const trustBadge = humanTrustLabel(trust.overall_trust);
+  const totalSeasons = state.seasons.length || 0;
+
+  if (els.homeSeasonTag) {
+    els.homeSeasonTag.textContent = String(season || "-");
+  }
 
   const prompts = [
-    "Who dominated the powerplay in IPL 2024?",
-    "What changed in the 2024 final?",
+    "Why did KKR dominate the 2024 final?",
     "Who performs best against spin?",
+    "What changed this innings?",
+    "What makes this player different?",
     "What is likely to happen next?",
   ];
   if (els.homeAskPrompts) {
@@ -752,44 +864,107 @@ async function loadHomeLaunchpad() {
 
   if (els.homeUpcoming) {
     els.homeUpcoming.textContent = upcoming
-      ? `${teamLabel(upcoming.team_a, "Team A")} vs ${teamLabel(upcoming.team_b, "Team B")} | ${upcoming.match_date || "Date unavailable"}`
+      ? `Upcoming: ${teamLabel(upcoming.team_a, "Team A")} vs ${teamLabel(upcoming.team_b, "Team B")} · ${upcoming.match_date || "Date unavailable"}`
       : "Verified information is not currently available.";
   }
   if (els.homeLatest) {
     els.homeLatest.textContent = latest
-      ? `${teamLabel(latest.team_a, "Team A")} vs ${teamLabel(latest.team_b, "Team B")} | ${latest.winner || "Result pending"}`
+      ? `Latest result: ${teamLabel(latest.team_a, "Team A")} vs ${teamLabel(latest.team_b, "Team B")} · ${latest.winner || "Result pending"}`
       : "Verified information is not currently available.";
   }
   if (els.homeSeasonStatus) {
     els.homeSeasonStatus.textContent = leader
-      ? `${leader.team} lead with ${leader.points} points (NRR ${leader.net_run_rate})`
+      ? `Table context: ${leader.team} lead with ${leader.points} points (NRR ${leader.net_run_rate})`
       : "Verified information is not currently available.";
   }
+
+  if (els.homeTopPerformers) {
+    els.homeTopPerformers.innerHTML = `
+      <p class='context-stat'><strong>${topRun ? metricDisplay(topRun.value) : "-"}</strong><span>runs · ${escapeHtml(topRun?.player || "Not available")}</span></p>
+      <p class='context-stat'><strong>${topWicket ? metricDisplay(topWicket.value) : "-"}</strong><span>wickets · ${escapeHtml(topWicket?.player || "Not available")}</span></p>
+      <p class='context-stat'><strong>${escapeHtml(leader?.team || "Not available")}</strong><span>champion trajectory / table lead</span></p>
+    `;
+  }
+
+  if (els.homeDataStatement) {
+    const matches = Number(overviewPayload.matches || 0);
+    const deliveries = Number(overviewPayload.deliveries || 0);
+    els.homeDataStatement.innerHTML = `
+      <span><strong>${totalSeasons || "-"}</strong> seasons</span>
+      <span><strong>${matches ? matches.toLocaleString("en-IN") : "-"}</strong> matches</span>
+      <span><strong>${deliveries ? deliveries.toLocaleString("en-IN") : "-"}</strong> deliveries</span>
+      <span class='muted'>One continuous game</span>
+    `;
+  }
+
   if (els.homeSignals) {
     const runSignal = topRun ? `${topRun.player} leads runs (${topRun.value}).` : "Run leader unavailable.";
     const wicketSignal = topWicket ? `${topWicket.player} leads wickets (${topWicket.value}).` : "Wicket leader unavailable.";
-    const trustSignal = coverage.deliveries_matches
+    const championSignal = leader ? `${leader.team} currently hold the strongest table position (${leader.points} pts).` : "Champion/leader signal unavailable.";
+    const coverageSignal = coverage.deliveries_matches
       ? `Season coverage: ${coverage.deliveries_matches} matches in deliveries${coverage.metadata_matches ? `, ${coverage.metadata_matches} with metadata` : ""}.`
       : "Season coverage unavailable.";
-    const trustBadge = trust.overall_trust === "TRUSTED_INTERNAL_WITH_DEFINITION_NOTE" ? "Officially reconciled with definition note" : "Internally validated";
-    els.homeSignals.innerHTML = `<p class='eyebrow'>GENOME SIGNALS</p><p>${runSignal}</p><p>${wicketSignal}</p><p>${trustSignal}</p><p class='muted'>Trust: ${trustBadge}. Replay lets you test prediction vs reality ball by ball.</p>`;
+
+    const pathNarrative = {
+      player: { title: "Player", detail: runSignal },
+      matchup: {
+        title: "Matchup",
+        detail: upcoming
+          ? `${teamLabel(upcoming.team_a, "Team A")} vs ${teamLabel(upcoming.team_b, "Team B")} is the next active matchup context.`
+          : "Upcoming matchup context is not currently available.",
+      },
+      phase: {
+        title: "Phase",
+        detail: latest
+          ? `Latest completed event anchors current phase interpretation for IPL ${latest.season_id || season}.`
+          : "Completed match phase context is currently unavailable.",
+      },
+      pressure: { title: "Pressure", detail: championSignal },
+      outcome: { title: "Outcome", detail: wicketSignal },
+    };
+
+    const renderHomeSignal = (nodeKey) => {
+      const chosen = pathNarrative[nodeKey] || pathNarrative.player;
+      els.homeSignals.innerHTML = `
+        <div class='signal-line'>
+          <p class='eyebrow'>${escapeHtml(chosen.title)} SIGNAL</p>
+          <strong>${escapeHtml(chosen.detail)}</strong>
+        </div>
+        <p class='muted'>${escapeHtml(coverageSignal)}</p>
+        <p class='muted'>Trust: ${escapeHtml(trustBadge)}.</p>
+      `;
+    };
+
+    renderHomeSignal("player");
+    if (els.homeGenomePath) {
+      els.homeGenomePath.querySelectorAll(".genome-node").forEach((button) => {
+        button.onclick = () => {
+          const node = button.getAttribute("data-node") || "player";
+          els.homeGenomePath.querySelectorAll(".genome-node").forEach((n) => n.classList.remove("active"));
+          button.classList.add("active");
+          renderHomeSignal(node);
+        };
+      });
+    }
   }
 
   if (els.homeFeaturedMatch) {
     const featured = upcoming || latest || null;
     if (!featured) {
-      els.homeFeaturedMatch.innerHTML = "<p class='eyebrow'>MATCH INTELLIGENCE</p><h3>Featured Match</h3><p class='muted'>Verified information is not currently available.</p>";
+      els.homeFeaturedMatch.innerHTML = "<p class='eyebrow'>MATCH STORY</p><p class='muted'>Verified match narrative is not currently available.</p>";
     } else {
       const matchId = Number(featured.match_id || 0);
       els.homeFeaturedMatch.innerHTML = `
-        <p class='eyebrow'>MATCH INTELLIGENCE</p>
-        <h3>${teamLabel(featured.team_a, "Team A")} vs ${teamLabel(featured.team_b, "Team B")}</h3>
-        <p class='muted'>${featured.match_date || "Date unavailable"} · IPL ${featured.season_id} · Match ${featured.match_number || "-"}</p>
-        <p class='muted'>${featured.venue || "Venue unavailable"}${featured.city ? `, ${featured.city}` : ""}</p>
+        <p class='eyebrow'>A MATCH CHANGED HERE</p>
+        <div class='match-moment'>
+          <strong>${teamLabel(featured.team_a, "Team A")} vs ${teamLabel(featured.team_b, "Team B")}</strong>
+          <p>${featured.match_date || "Date unavailable"} · IPL ${featured.season_id} · Match ${featured.match_number || "-"}</p>
+          <p>${featured.venue || "Venue unavailable"}${featured.city ? `, ${featured.city}` : ""}</p>
+        </div>
         <div class='row-actions'>
-          <button type='button' class='primary' id='homeOpenFeaturedMatchBtn'>Explore match</button>
-          <button type='button' id='homeReplayFeaturedMatchBtn'>Replay</button>
-          <button type='button' id='homeAskFeaturedMatchBtn'>Ask about this match</button>
+          <button type='button' class='primary' id='homeOpenFeaturedMatchBtn'>Open Event Space</button>
+          <button type='button' id='homeReplayFeaturedMatchBtn'>Replay the moment</button>
+          <button type='button' id='homeAskFeaturedMatchBtn'>Ask this match context</button>
         </div>
       `;
       const openBtn = document.getElementById("homeOpenFeaturedMatchBtn");
@@ -804,25 +979,16 @@ async function loadHomeLaunchpad() {
     }
   }
 
-  if (els.homeTopPerformers) {
-    els.homeTopPerformers.innerHTML = `
-      <p class='eyebrow'>TOP PERFORMERS</p>
-      <h3>Season Leaders</h3>
-      <p>${topRun ? `<strong>Runs:</strong> ${topRun.player} (${topRun.value})` : "Runs leader unavailable."}</p>
-      <p>${topWicket ? `<strong>Wickets:</strong> ${topWicket.player} (${topWicket.value})` : "Wickets leader unavailable."}</p>
-      <p class='muted'>Use Stats for full leaderboards and qualification rules.</p>
-      <div class='row-actions'><button type='button' id='homeTopToStatsBtn'>Open Stats</button></div>
-    `;
-    const statsBtn = document.getElementById("homeTopToStatsBtn");
-    if (statsBtn) statsBtn.addEventListener("click", () => setRoute({ view: "stats", tab: "batting", season_id: season || "" }));
-  }
 
   if (els.homeDiscoveryStrip) {
+    const featuredFinal = latest
+      ? `${teamLabel(latest.team_a, "Team A")} vs ${teamLabel(latest.team_b, "Team B")}`
+      : "Final context unavailable";
     els.homeDiscoveryStrip.innerHTML = `
-      <button type='button' class='quick-link' id='homeDiscoveryReplay'>Replay Time Machine</button>
-      <button type='button' class='quick-link' id='homeDiscoveryPlayers'>Player Intelligence</button>
-      <button type='button' class='quick-link' id='homeDiscoveryTeams'>Team Intelligence</button>
-      <button type='button' class='quick-link' id='homeDiscoveryStats'>Historical Stats</button>
+      <article class='stream-item'><p class='eyebrow'>01 · RUNS</p><h4>${topRun ? escapeHtml(topRun.player) : "Not available"}</h4><p>${topRun ? `${metricDisplay(topRun.value)} runs` : "No verified signal"}</p></article>
+      <article class='stream-item'><p class='eyebrow'>02 · WICKETS</p><h4>${topWicket ? escapeHtml(topWicket.player) : "Not available"}</h4><p>${topWicket ? `${metricDisplay(topWicket.value)} wickets` : "No verified signal"}</p></article>
+      <article class='stream-item'><p class='eyebrow'>03 · MATCH</p><h4>${escapeHtml(featuredFinal)}</h4><p>${escapeHtml(latest?.winner || "Result unavailable")}</p></article>
+      <article class='stream-item action'><button type='button' class='quick-link' id='homeDiscoveryReplay'>Replay this world -></button><button type='button' class='quick-link' id='homeDiscoveryPlayers'>Open player intelligence -></button><button type='button' class='quick-link' id='homeDiscoveryTeams'>Open team timeline -></button><button type='button' class='quick-link' id='homeDiscoveryStats'>Explore season patterns -></button></article>
     `;
     const map = [
       ["homeDiscoveryReplay", { view: "replay" }],
@@ -985,7 +1151,7 @@ function filteredMatches() {
 async function selectTimeMachineMatch(match) {
   state.selectedMatchId = Number(match.match_id);
   state.selectedMatch = match;
-  els.selectedMatchMeta.textContent = `${matchTitleFromMeta(match)} · IPL ${match.season_id} · Match ${match.match_number || match.season_match_number || "-"} · Match ID ${match.match_id}`;
+  els.selectedMatchMeta.textContent = `${matchTitleFromMeta(match)} · IPL ${match.season_id} · Match ${match.match_number || match.season_match_number || "-"}`;
   if (els.replayBanner) {
     const banner = renderMatchBanner(teamLabel(match.team_a, "Team A"), teamLabel(match.team_b, "Team B"));
     els.replayBanner.hidden = !banner;
@@ -1051,7 +1217,6 @@ function renderMatchCards() {
       </button>
       <div class='muted'>IPL ${m.season_id} · Match ${m.match_number || m.season_match_number || "-"}</div>
       <div class='muted'>${m.match_date || "Date unavailable"} · ${m.venue || "Venue unavailable"}${m.city ? `, ${m.city}` : ""}</div>
-      <div class='muted'>Match ID ${m.match_id}</div>
       ${unresolved ? "<div class='muted'>Unresolved team identity for this record.</div>" : ""}
       <div class='row-actions'><button type='button' class='replay-chip' data-match-id='${m.match_id}'>Replay this match</button></div>
     `;
@@ -1378,7 +1543,21 @@ async function loadPlayer(name) {
     bowlingPhaseTop ? `Strongest bowling phase: ${capitalize(bowlingPhaseTop.phase)} (${metricDisplay(bowlingPhaseTop.wickets)} wickets).` : null,
   ].filter(Boolean);
 
+  const batYears = (payload.batting_intelligence?.by_season || []).map((r) => Number(r.season_id)).filter(Boolean);
+  const bowlYears = (payload.bowling_intelligence?.by_season || []).map((r) => Number(r.season_id)).filter(Boolean);
+  const years = [...new Set([...batYears, ...bowlYears])].sort((a, b) => a - b);
+  const anchorYears = years.length > 5 ? [years[0], years[Math.floor(years.length / 3)], years[Math.floor((2 * years.length) / 3)], years[years.length - 1]] : years;
+
   els.playerOverview.innerHTML = `
+    <p class='eyebrow'>CAREER SIGNAL</p>
+    <div class='event-rail'>
+      <p><span>Matches</span><strong>${metricDisplay(overview.matches)}</strong></p>
+      <p><span>Runs</span><strong>${metricDisplay(bat.runs)}</strong></p>
+      <p><span>Wickets</span><strong>${metricDisplay(bowl.wickets)}</strong></p>
+      <p><span>Strike rate</span><strong>${metricDisplay(bat.strike_rate)}</strong></p>
+    </div>
+    <p class='eyebrow'>CAREER EVOLUTION</p>
+    <div class='evolution-rail'>${anchorYears.length ? anchorYears.map((y) => `<span>${y}</span>`).join("") : "<span>Season trail unavailable</span>"}</div>
     <div class='stats-grid'>
       <div><span>Matches</span><strong>${metricDisplay(overview.matches)}</strong></div>
       <div><span>Runs</span><strong>${metricDisplay(bat.runs)}</strong></div>
@@ -1395,29 +1574,29 @@ async function loadPlayer(name) {
 
   els.playerBatting.innerHTML = hasBatting
     ? `
-      <div class='panel-block'><h5>Career snapshot</h5>
+      <div class='metric-rail'><h5>Career snapshot</h5>
       ${renderTable([bat], [
         { key: "runs", label: "Runs" },
-        { key: "balls", label: "Balls" },
+        { key: "balls", label: "B" },
         { key: "strike_rate", label: "SR" },
-        { key: "average", label: "Average" },
-        { key: "sixes", label: "Sixes" },
+        { key: "average", label: "Avg" },
+        { key: "sixes", label: "6s" },
       ])}</div>
-      <div class='panel-block'><h5>Outcome profile</h5>${renderOutcomeBars(payload.batting_intelligence?.outcome_distribution)}</div>
+      <div class='metric-rail'><h5>Outcome profile</h5>${renderOutcomeBars(payload.batting_intelligence?.outcome_distribution)}</div>
     `
     : "<p class='muted'>No batting sample for this player.</p>";
 
   els.playerBowling.innerHTML = hasBowling
     ? `
-      <div class='panel-block'><h5>Career snapshot</h5>
+      <div class='metric-rail'><h5>Career snapshot</h5>
       ${renderTable([bowl], [
         { key: "wickets", label: "Wkts" },
         { key: "runs_conceded", label: "Runs" },
         { key: "legal_balls", label: "Balls" },
-        { key: "economy", label: "Economy" },
-        { key: "strike_rate", label: "Strike Rate" },
+        { key: "economy", label: "Econ" },
+        { key: "strike_rate", label: "SR" },
       ])}</div>
-      <div class='panel-block'><h5>Outcome profile</h5>${renderOutcomeBars(payload.bowling_intelligence?.outcome_distribution)}</div>
+      <div class='metric-rail'><h5>Outcome profile</h5>${renderOutcomeBars(payload.bowling_intelligence?.outcome_distribution)}</div>
     `
     : "<p class='muted'>No bowling sample for this player.</p>";
 
@@ -1514,10 +1693,7 @@ function formatAskValue(value) {
   };
 
   value = maybeStructuredValue(value);
-  if (value === null || value === undefined) return "No answer available.";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return `<p>${value}</p>`;
-  }
+  if (value === null || value === undefined) return "<p class='muted'>No answer available.</p>";
 
   const prettyKey = (key) =>
     String(key || "")
@@ -1530,43 +1706,73 @@ function formatAskValue(value) {
     return null;
   };
 
-  const formatObject = (obj) => {
-    const entries = Object.entries(obj || {});
-    if (!entries.length) return "<p class='muted'>No details available.</p>";
-    return `<div class='ask-answer-grid'>${entries
-      .slice(0, 12)
-      .map(([key, raw]) => {
-        const valueText = scalar(raw);
-        if (valueText !== null) {
-          return `<p class='kv'><strong>${prettyKey(key)}:</strong> <span>${valueText}</span></p>`;
-        }
-        if (Array.isArray(raw)) {
-          return `<div><p><strong>${prettyKey(key)}:</strong></p><ul>${raw
-            .slice(0, 8)
-            .map((v) => `<li>${scalar(v) ?? JSON.stringify(v)}</li>`)
-            .join("")}</ul></div>`;
-        }
-        return `<div><p><strong>${prettyKey(key)}:</strong></p>${formatObject(raw)}</div>`;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return `<p class='answer-inline'>${escapeHtml(String(value))}</p>`;
+  }
+
+  const renderRankedRows = (rows) => {
+    const ranked = (rows || [])
+      .map((row) => (typeof row === "object" && row ? row : null))
+      .filter(Boolean)
+      .filter((row) => row.player || row.team || row.name || row.value !== undefined);
+    if (!ranked.length) return "";
+    return `<div class='ask-structured-rank'>${ranked
+      .slice(0, 10)
+      .map((row, index) => {
+        const name = row.player || row.team || row.name || row.label || "-";
+        const metric = row.value ?? row.runs ?? row.wickets ?? row.points ?? row.score ?? "-";
+        return `<p class='ask-rank-row'><span>${index + 1}</span><span>${escapeHtml(String(name))}</span><strong>${escapeHtml(String(metric))}</strong></p>`;
       })
       .join("")}</div>`;
   };
 
+  const renderMatchSummary = (obj) => {
+    const hasMatchShape = obj && (obj.team_a || obj.team_b || obj.winner || obj.match_number || obj.margin);
+    if (!hasMatchShape) return "";
+    return `
+      <section class='ask-match-answer'>
+        <p class='match-head'>${escapeHtml(teamLabel(obj.team_a, "Team A"))} <span>vs</span> ${escapeHtml(teamLabel(obj.team_b, "Team B"))}</p>
+        <p>${escapeHtml(String(obj.winner || "Result pending"))}${obj.margin ? ` · ${escapeHtml(String(obj.margin))}` : ""}</p>
+        <p class='muted'>${escapeHtml(String(obj.match_date || "Date unavailable"))} · IPL ${escapeHtml(String(obj.season || obj.season_id || "-"))} · Match ${escapeHtml(String(obj.match_number || "-"))}</p>
+      </section>
+    `;
+  };
+
   if (Array.isArray(value)) {
     if (!value.length) return "<p class='muted'>No rows available.</p>";
-    const allScalars = value.every((item) => scalar(maybeStructuredValue(item)) !== null);
-    if (allScalars) {
-      return `<p>${value.map((item) => scalar(maybeStructuredValue(item))).join(", ")}</p>`;
-    }
+    const rankList = renderRankedRows(value);
+    if (rankList) return rankList;
     return `<ul>${value
       .slice(0, 8)
       .map((item) => {
         const normalized = maybeStructuredValue(item);
         const text = scalar(normalized);
-        return `<li>${text !== null ? text : formatObject(normalized)}</li>`;
+        return `<li>${escapeHtml(text !== null ? text : "Structured value")}</li>`;
       })
       .join("")}</ul>`;
   }
-  return formatObject(value);
+
+  if (typeof value === "object") {
+    const matchSummary = renderMatchSummary(value);
+    if (matchSummary) return matchSummary;
+    if (Array.isArray(value.rows)) {
+      const rankList = renderRankedRows(value.rows);
+      if (rankList) return rankList;
+    }
+    if (value.answer && (typeof value.answer === "string" || typeof value.answer === "number")) {
+      return `<p class='answer-inline'>${escapeHtml(String(value.answer))}</p>`;
+    }
+    const entries = Object.entries(value || {});
+    return `<div class='ask-kv-list'>${entries
+      .slice(0, 12)
+      .map(([key, raw]) => {
+        const valueText = scalar(raw);
+        return `<p><span>${prettyKey(key)}</span><strong>${escapeHtml(valueText !== null ? valueText : "Structured value")}</strong></p>`;
+      })
+      .join("")}</div>`;
+  }
+
+  return `<p class='answer-inline'>${escapeHtml(String(value))}</p>`;
 }
 
 function formatPlanFilters(filters) {
@@ -1598,6 +1804,24 @@ function maybePlayerFromAsk(result) {
   if (value && typeof value.batter === "string") return value.batter;
   if (value && typeof value.player_of_match === "string") return value.player_of_match;
   return null;
+}
+
+function maybeMatchRouteFromAsk(result) {
+  const entities = result.query_plan?.entities || {};
+  const value = result.result?.value;
+  const season = Number(entities.season || value?.season || value?.season_id || 0) || "";
+  const matchId = Number(value?.match_id || 0) || "";
+  const team = typeof entities.team === "string" ? entities.team : "";
+  const isMatchLike = Boolean(matchId || entities.match_type || value?.team_a || value?.team_b || value?.winner);
+  if (!isMatchLike) return null;
+  return {
+    view: "matches",
+    tab: "results",
+    season_id: season,
+    match_id: matchId,
+    status: "completed",
+    team,
+  };
 }
 
 function isCleanPlayerName(name) {
@@ -1646,39 +1870,56 @@ function renderAskResults(payload) {
       const source = evidence.source || "MatchGenome IPL database";
       const sourceUrl = evidence.source_url ? `<a href='${evidence.source_url}' target='_blank' rel='noreferrer noopener'>source</a>` : "local";
       const coverage = evidence.sample_size || evidence.matches || evidence.rows || "Available in local dataset";
-      const trustSummary = seasonTrust.overall_trust === "TRUSTED_OFFICIAL_RECONCILED"
-        ? "Official reference reconciled"
-        : seasonTrust.overall_trust === "TRUSTED_INTERNAL_WITH_DEFINITION_NOTE"
-          ? "Officially reconciled with definition note"
-          : seasonTrust.overall_trust === "TRUSTED_INTERNAL"
-            ? "Internally validated"
-            : seasonTrust.overall_trust === "UNTRUSTED"
-              ? "Untrusted"
-              : "Reference unavailable";
+      const trustSummary = humanTrustLabel(seasonTrust.overall_trust);
 
       const entities = item.query_plan?.entities || {};
       const entityButtons = [];
+      const matchRoute = maybeMatchRouteFromAsk(item);
       if (typeof entities.team === "string" && entities.team.trim()) {
-        entityButtons.push("<button type='button' class='ask-entity-link' data-route='teams'>Open Team Intelligence</button>");
+        entityButtons.push(`<button type='button' class='ask-entity-link' data-route='teams' data-team='${escapeHtml(entities.team)}' data-question='${escapeHtml(item.question || "")}' >Open Team Intelligence</button>`);
+      }
+      if (matchRoute) {
+        entityButtons.push(`<button type='button' class='ask-match-link' data-season='${matchRoute.season_id || ""}' data-match='${matchRoute.match_id || ""}' data-team='${escapeHtml(matchRoute.team || "")}' data-question='${escapeHtml(item.question || "")}' >Open Match Event Space</button>`);
       }
       if (player) {
-        entityButtons.push(`<button type='button' class='ask-player-link' data-player='${escapeHtml(player)}'>Open Player Intelligence</button>`);
+        entityButtons.push(`<button type='button' class='ask-player-link' data-player='${escapeHtml(player)}' data-question='${escapeHtml(item.question || "")}' >Open Player Dossier</button>`);
       }
       if (Number(entities.season || 0)) {
-        entityButtons.push(`<button type='button' class='ask-season-link' data-season='${Number(entities.season)}'>Open Season Stats</button>`);
+        entityButtons.push(`<button type='button' class='ask-season-link' data-season='${Number(entities.season)}' data-question='${escapeHtml(item.question || "")}' >Open Season Patterns</button>`);
       }
       return `<article class='ask-result-card'>
-        <p class='muted'>${item.question}</p>
-        <div class='answer-lead'>${formatAskValue(item.result?.value)}</div>
-        <p>${item.result?.label || "Answer from local IPL data."}</p>
-        <div class='ask-meta-row'>
-          <span class='trust-chip'>${trustSummary}</span>
-          <span class='trust-chip'>Confidence: ${confidence}</span>
-          <span class='trust-chip'>Coverage: ${coverage}</span>
-        </div>
-        <p class='muted'>Source: ${source} (${sourceUrl})</p>
-        ${entityButtons.length ? `<div class='row-actions'>${entityButtons.join("")}</div>` : ""}
-        <details><summary>Show evidence and provenance</summary>${formatResolutionEntities((item.result && item.result.evidence) || {})}</details>
+        <section class='ask-flow-result'>
+          <div class='ask-layer question'>
+            <p class='eyebrow'>QUESTION</p>
+            <p class='ask-question'>${escapeHtml(item.question || "")}</p>
+          </div>
+          <div class='ask-layer answer'>
+            <p class='eyebrow'>ANSWER</p>
+            <div class='answer-lead'>${formatAskValue(item.result?.value)}</div>
+          </div>
+          <div class='ask-layer interpretation'>
+            <p class='eyebrow'>INTERPRETATION</p>
+            <p>${item.result?.label || "Answer from verified local IPL evidence."}</p>
+          </div>
+          <div class='ask-layer context'>
+            <p class='eyebrow'>CONTEXT</p>
+            <p>Entities: ${formatPlanFilters(item.query_plan?.entities || {})}</p>
+          </div>
+          <div class='ask-layer evidence'>
+            <p class='eyebrow'>EVIDENCE</p>
+            <p>Source: ${source} (${sourceUrl})</p>
+            <p>Coverage: ${coverage}</p>
+            <details><summary>Show evidence and provenance</summary>${formatResolutionEntities((item.result && item.result.evidence) || {})}</details>
+          </div>
+          <div class='ask-layer trust'>
+            <p class='eyebrow'>TRUST</p>
+          <div class='ask-meta-row'>
+            <span class='trust-chip'>${trustSummary}</span>
+            <span class='trust-chip'>Verification: ${confidence}</span>
+          </div>
+          </div>
+          ${entityButtons.length ? `<div class='row-actions'>${entityButtons.join("")}</div>` : ""}
+        </section>
       </article>`;
     })
     .join("");
@@ -1686,18 +1927,42 @@ function renderAskResults(payload) {
   els.askResults.querySelectorAll(".ask-player-link").forEach((button) => {
     button.addEventListener("click", () => {
       const player = button.getAttribute("data-player");
+      const question = button.getAttribute("data-question") || "";
       if (!player) return;
-      setRoute({ view: "player", player });
+      setRoute({ view: "player", player, origin: "ask", question });
     });
   });
   els.askResults.querySelectorAll(".ask-season-link").forEach((button) => {
     button.addEventListener("click", () => {
       const season = Number(button.getAttribute("data-season") || 0);
-      setRoute({ view: "stats", tab: "overview", season_id: season || "" });
+      const question = button.getAttribute("data-question") || "";
+      setRoute({ view: "stats", tab: "overview", season_id: season || "", origin: "ask", question });
     });
   });
   els.askResults.querySelectorAll(".ask-entity-link").forEach((button) => {
-    button.addEventListener("click", () => setRoute({ view: "teams" }));
+    button.addEventListener("click", () => {
+      const team = button.getAttribute("data-team") || "";
+      const question = button.getAttribute("data-question") || "";
+      setRoute({ view: "teams", team, origin: "ask", question });
+    });
+  });
+  els.askResults.querySelectorAll(".ask-match-link").forEach((button) => {
+    button.addEventListener("click", () => {
+      const season = Number(button.getAttribute("data-season") || 0);
+      const matchId = Number(button.getAttribute("data-match") || 0);
+      const team = button.getAttribute("data-team") || "";
+      const question = button.getAttribute("data-question") || "";
+      setRoute({
+        view: "matches",
+        tab: "results",
+        season_id: season || "",
+        match_id: matchId || "",
+        status: "completed",
+        team,
+        origin: "ask",
+        question,
+      });
+    });
   });
 }
 
@@ -1708,6 +1973,8 @@ async function runAsk() {
     return;
   }
   setStatus("Asking MatchGenome...");
+  state.askContextQuestion = question;
+  state.contextOrigin = "ask";
   const payload = await api.post("/api/ask", { question });
   renderAskResults(payload);
   clearStatus();
@@ -1781,7 +2048,7 @@ async function loadMatches() {
   state.selectedMatchId = state.selectedMatch ? Number(state.selectedMatch.match_id) : null;
   if (state.selectedMatch) {
     const first = state.selectedMatch;
-    els.selectedMatchMeta.textContent = `${matchTitleFromMeta(first)} · IPL ${first.season_id} · Match ${first.match_number || first.season_match_number || "-"} · Match ID ${first.match_id}`;
+    els.selectedMatchMeta.textContent = `${matchTitleFromMeta(first)} · IPL ${first.season_id} · Match ${first.match_number || first.season_match_number || "-"}`;
   } else {
     els.selectedMatchMeta.textContent = "Select a match card to continue.";
   }
@@ -1916,10 +2183,19 @@ async function restartReplay() {
 
 function syncRoute() {
   const route = parseRoute();
+  state.contextOrigin = route.origin || "";
+  if (route.question) state.askContextQuestion = route.question;
+
   if (route.view === "player") {
     setView("player");
     if (route.player) {
-      loadPlayer(route.player).catch((err) => setStatus(err.message || "Failed to load player.", "error"));
+      loadPlayer(route.player)
+        .then(() => {
+          if (!state.sessionMeta && state.contextOrigin === "ask" && state.askContextQuestion) {
+            els.playerContextText.textContent = `Opened from Ask: "${state.askContextQuestion}"`;
+          }
+        })
+        .catch((err) => setStatus(err.message || "Failed to load player.", "error"));
     } else {
       els.playerPanel.hidden = true;
       els.playerPrompt.hidden = false;
@@ -1966,6 +2242,18 @@ function syncRoute() {
 
   if (route.view === "teams") {
     setView("teams");
+    if (route.team) {
+      const hasTeamOption = Array.from(els.teamsSelect.options || []).some((opt) => String(opt.value) === String(route.team));
+      if (hasTeamOption) {
+        els.teamsSelect.value = String(route.team);
+      }
+    }
+    if (!els.teamSeasonSelect.value && els.statsSeasonSelect.value) {
+      els.teamSeasonSelect.value = String(els.statsSeasonSelect.value);
+    }
+    if (!els.teamSeasonSelect.value && els.teamSeasonSelect.options.length) {
+      els.teamSeasonSelect.value = String(els.teamSeasonSelect.options[0].value || "");
+    }
     loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error"));
     return;
   }
@@ -2096,6 +2384,20 @@ function attachEvents() {
     button.addEventListener("click", () => {
       els.askInput.value = button.getAttribute("data-prompt") || "";
       runAsk().catch((err) => setStatus(err.message || "Ask failed.", "error"));
+    });
+  });
+  document.querySelectorAll(".ask-domain-strip button[data-route]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const route = button.getAttribute("data-route") || "";
+      if (!route) return;
+      const map = {
+        player: { view: "player" },
+        teams: { view: "teams" },
+        matches: { view: "matches" },
+        stats: { view: "stats", tab: "overview", season_id: Number(els.statsSeasonSelect.value || 0) || "" },
+        replay: { view: "replay" },
+      };
+      setRoute(map[route] || { view: "ask" });
     });
   });
 

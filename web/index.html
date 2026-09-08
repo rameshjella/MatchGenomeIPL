@@ -12,127 +12,137 @@
         <div class="brand-block">
           <p class="eyebrow">MATCHGENOME</p>
           <h1>Know the game. Before it happens.</h1>
-          <p class="lede">Know IPL history, understand context, ask better questions, and replay critical moments with evidence.</p>
+          <p class="lede">An IPL intelligence system for understanding connected patterns across players, teams, moments, and probabilities.</p>
         </div>
         <nav class="mode-nav" aria-label="Product navigation">
-          <button id="goHomeBtn" type="button" class="primary">Home</button>
-          <button id="goMatchesBtn" type="button">Matches</button>
-          <button id="goTeamsBtn" type="button">Teams</button>
-          <button id="goPlayerIntelligenceBtn" type="button">Players</button>
-          <button id="goStatsBtn" type="button">Stats</button>
-          <button id="goPredictBtn" type="button">Predict</button>
-          <button id="goReplayBtn" type="button">Replay</button>
-          <button id="goAskBtn" type="button" class="ask-entry">Ask MatchGenome</button>
+          <span class="nav-lane nav-primary-lane">
+            <button id="goHomeBtn" type="button" class="primary">Home</button>
+            <button id="goMatchesBtn" type="button">Explore</button>
+            <button id="goReplayBtn" type="button">Replay</button>
+            <button id="goAskBtn" type="button" class="ask-entry">Ask</button>
+          </span>
+          <span class="nav-lane nav-secondary-lane">
+            <button id="goTeamsBtn" type="button">Teams</button>
+            <button id="goPlayerIntelligenceBtn" type="button">Players</button>
+            <button id="goStatsBtn" type="button">Stats</button>
+            <button id="goPredictBtn" type="button">Predict</button>
+          </span>
         </nav>
       </header>
 
       <section id="statusBanner" class="status" hidden></section>
 
       <section id="homeView" class="view">
-        <section class="hero-card">
-          <h2>Intelligence Launchpad</h2>
-          <p class="headline">Understand what matters now. Explore what is likely next.</p>
-          <p class="muted">MatchGenome connects knowledge, context, prediction, and replay into one IPL intelligence experience.</p>
-          <div class="search-row">
-            <input id="homeAskInput" type="search" placeholder="Ask anything about the IPL..." aria-label="Ask anything about the IPL" />
-            <button id="homeAskBtn" class="primary" type="button">Ask</button>
+        <section class="hero-card intelligence-canvas">
+          <div class="canvas-title-zone reveal-step">
+            <p class="eyebrow">MATCHGENOME INTELLIGENCE CANVAS</p>
+            <h2>Know the game. Before it happens.</h2>
+            <p class="headline">Context -> Question -> Intelligence -> Relationship -> Evidence -> Action</p>
           </div>
-          <div class="ask-prompt-strip" id="homeAskPrompts"></div>
-          <div class="launch-grid">
-            <article class="launch-card">
-              <p class="eyebrow">CURRENT CONTEXT</p>
-              <h3>Upcoming Match</h3>
-              <p id="homeUpcoming" class="muted">Loading...</p>
-            </article>
-            <article class="launch-card">
-              <p class="eyebrow">LATEST RESULT</p>
-              <h3>Most Recent Completed Match</h3>
-              <p id="homeLatest" class="muted">Loading...</p>
-            </article>
-            <article class="launch-card">
-              <p class="eyebrow">SEASON STATUS</p>
-              <h3>Current Points Leader</h3>
-              <p id="homeSeasonStatus" class="muted">Loading...</p>
-            </article>
-          </div>
-          <div class="panel-block emphasis" id="homeSignals">
-            <p class="eyebrow">GENOME SIGNALS</p>
-            <p class="muted">Loading form, matchup, momentum, and pressure signals...</p>
-          </div>
-          <div class="launch-grid dual-grid">
-            <article class="panel-block" id="homeFeaturedMatch">
-              <p class="eyebrow">MATCH INTELLIGENCE</p>
-              <h3>Featured Match</h3>
+
+          <section class="ask-entry-zone reveal-step" aria-label="Ask MatchGenome">
+            <p class="eyebrow">ASK MATCHGENOME</p>
+            <label class="sr-only" for="homeAskInput">What do you want to understand?</label>
+            <div class="search-row canvas-search-row">
+              <input id="homeAskInput" type="search" placeholder="What do you want to understand?" aria-label="What do you want to understand?" />
+              <button id="homeAskBtn" class="primary" type="button">Open Ask Surface</button>
+            </div>
+            <div class="ask-prompt-strip" id="homeAskPrompts"></div>
+          </section>
+
+          <section class="season-context-field reveal-step" aria-label="Current IPL context">
+            <p class="eyebrow">LIVE SEASON CONTEXT</p>
+            <div class="season-context-grid">
+              <p class="season-label">IPL <strong id="homeSeasonTag">-</strong></p>
+              <p class="context-line" id="homeUpcoming">Loading current context...</p>
+              <p class="context-line" id="homeLatest">Loading latest result...</p>
+              <p class="context-line" id="homeSeasonStatus">Loading season status...</p>
+              <div id="homeTopPerformers" class="context-numerics">Loading leaders...</div>
+            </div>
+            <div id="homeDataStatement" class="data-statement">Loading dataset continuity...</div>
+          </section>
+
+          <section class="genome-path-zone reveal-step" aria-label="Genome path">
+            <p class="eyebrow">GENOME PATH</p>
+            <div class="genome-path" id="homeGenomePath">
+              <button type="button" class="genome-node active" data-node="player">Player</button>
+              <span class="genome-link" aria-hidden="true"></span>
+              <button type="button" class="genome-node" data-node="matchup">Matchup</button>
+              <span class="genome-link" aria-hidden="true"></span>
+              <button type="button" class="genome-node" data-node="phase">Phase</button>
+              <span class="genome-link" aria-hidden="true"></span>
+              <button type="button" class="genome-node" data-node="pressure">Pressure</button>
+              <span class="genome-link" aria-hidden="true"></span>
+              <button type="button" class="genome-node" data-node="outcome">Outcome</button>
+            </div>
+            <div id="homeSignals" class="home-signal-narrative">
+              <p class="muted">Loading relationship signals...</p>
+            </div>
+          </section>
+
+          <section class="home-narrative-grid reveal-step">
+            <article id="homeFeaturedMatch" class="narrative-thread">
+              <p class="eyebrow">MATCH STORY</p>
               <p class="muted">Loading match context...</p>
             </article>
-            <article class="panel-block" id="homeTopPerformers">
-              <p class="eyebrow">TOP PERFORMERS</p>
-              <h3>Season Leaders</h3>
-              <p class="muted">Loading leaders...</p>
+            <article class="narrative-thread">
+              <p class="eyebrow">INTELLIGENCE ACTIONS</p>
+              <div class="inline-actions">
+                <button id="exploreMatchBtn" class="quick-link" type="button">Open Match Event Space</button>
+                <button id="goTeamsIntroBtn" class="quick-link" type="button">Open Team Timeline</button>
+                <button id="goPlayersIntroBtn" class="quick-link" type="button">Open Player Dossier</button>
+              </div>
+              <div class="search-row micro-search-row">
+                <select id="homeReplaySeasonSelect"></select>
+                <button id="homeReplayBtn" type="button">Replay Historical Match</button>
+              </div>
             </article>
-          </div>
-          <div class="launch-grid">
-            <article class="launch-card">
-              <p class="eyebrow">EXPLORE</p>
-              <h3>Matches</h3>
-              <p>Fixtures, results, scorecards, and direct replay entry points.</p>
-              <button id="exploreMatchBtn" class="primary" type="button">Open Matches</button>
-            </article>
-            <article class="launch-card">
-              <p class="eyebrow">EXPLORE</p>
-              <h3>Teams</h3>
-              <p>Season-aware leadership, squad context, and linked player intelligence.</p>
-              <button id="goTeamsIntroBtn" class="primary" type="button">Open Teams</button>
-            </article>
-            <article class="launch-card">
-              <p class="eyebrow">EXPLORE</p>
-              <h3>Players</h3>
-              <p>Player identity, season trajectory, and matchup intelligence.</p>
-              <button id="goPlayersIntroBtn" class="primary" type="button">Open Players</button>
-            </article>
-          </div>
-          <div class="panel-block">
-            <p class="eyebrow">DISCOVERY</p>
+          </section>
+
+          <section class="discovery-field reveal-step" aria-label="Discovery pathways">
+            <p class="eyebrow">LIVE INTELLIGENCE STREAM</p>
             <div class="discovery-strip" id="homeDiscoveryStrip"></div>
-          </div>
-          <div class="panel-block">
-            <p class="eyebrow">TIME MACHINE</p>
-            <div class="search-row">
-              <select id="homeReplaySeasonSelect"></select>
-              <button id="homeReplayBtn" type="button">Replay Historical Match</button>
-            </div>
-          </div>
+          </section>
         </section>
       </section>
 
       <section id="askView" class="view" hidden>
-        <section class="ask-layout">
-          <article class="ask-composer">
+        <section class="ask-layout ask-chamber intelligence-canvas">
+          <article class="ask-composer reveal-step">
+            <p class="eyebrow">NATURAL LANGUAGE CONTROL SURFACE</p>
             <h2>Ask MatchGenome</h2>
-            <p class="muted">Ask anything about IPL. Get an answer first, then context, evidence, and provenance.</p>
+            <p class="muted">Ask anything about IPL. The canvas preserves your question, then reveals answer, context, evidence, and trust.</p>
             <label class="sr-only" for="askInput">Question</label>
-            <textarea id="askInput" rows="5" placeholder="Ask anything about the IPL..."></textarea>
+            <textarea id="askInput" rows="5" placeholder="What do you want to understand?"></textarea>
             <div class="row-actions">
-              <button id="askSubmitBtn" class="primary" type="button">Ask</button>
+              <button id="askSubmitBtn" class="primary" type="button">Generate Intelligence</button>
+            </div>
+            <div class="ask-domain-strip" aria-label="Ask discovery">
+              <button type="button" data-route="player">Player context</button>
+              <button type="button" data-route="teams">Team context</button>
+              <button type="button" data-route="matches">Match context</button>
+              <button type="button" data-route="stats">Season context</button>
+              <button type="button" data-route="replay">Decision replay</button>
             </div>
             <div class="ask-examples" id="askExamples">
-              <button type="button" data-prompt="How many sixes did Dhoni hit in 2014?">How many sixes did Dhoni hit in 2014?</button>
-              <button type="button" data-prompt="Who was man of the match in the 2014 final?">Who was man of the match in the 2014 final?</button>
-              <button type="button" data-prompt="Compare Kohli and Dhoni in death overs.">Compare Kohli and Dhoni in death overs.</button>
-              <button type="button" data-prompt="How many wickets did Bumrah take in 2019?">How many wickets did Bumrah take in 2019?</button>
-              <button type="button" data-prompt="Show Rohit's best IPL season.">Show Rohit's best IPL season.</button>
+              <button type="button" data-prompt="What is the full name of Dhoni?">What is the full name of Dhoni?</button>
+              <button type="button" data-prompt="Who is RCB captain?">Who is RCB captain?</button>
+              <button type="button" data-prompt="What was the winner of the IPL 2024 final?">What was the winner of the IPL 2024 final?</button>
+              <button type="button" data-prompt="Who scored the most runs in IPL 2015?">Who scored the most runs in IPL 2015?</button>
+              <button type="button" data-prompt="What is likely to happen next?">What is likely to happen next?</button>
             </div>
           </article>
           <article class="ask-results" id="askResults">
-            <p class="muted">Answers appear here with source-backed evidence and confidence.</p>
+            <p class="muted">Ask a question to begin the intelligence sequence.</p>
           </article>
         </section>
       </section>
 
       <section id="fixturesView" class="view" hidden>
-        <section class="hero-card">
-          <h2>Matches</h2>
-          <p class="muted">Fixtures and results with scorecards, intelligence context, and replay entry points.</p>
+        <section class="hero-card event-space-shell">
+          <p class="context-pill">Match space · Timeline · Turning points · Replay</p>
+          <h2>Match Event Space</h2>
+          <p class="muted">Move through upcoming and completed matches as events with context, decisive moments, replay, and Ask entry points.</p>
           <div class="workspace-tabs">
             <button id="matchTabFixturesBtn" class="tab-btn active" type="button">Fixtures</button>
             <button id="matchTabResultsBtn" class="tab-btn" type="button">Results</button>
@@ -155,36 +165,38 @@
       </section>
 
       <section id="predictView" class="view" hidden>
-        <section class="hero-card">
-          <h2>Predict</h2>
-          <p class="muted">Use MatchGenome to project likely outcomes for matches, players, and scenarios.</p>
-          <div class="launch-grid">
-            <article class="launch-card">
-              <p class="eyebrow">MATCH PREDICTION</p>
-              <h3>Pre-ball replay prediction</h3>
-              <p>Start from a real match state and generate deterministic next-ball probabilities.</p>
-              <button id="predictToReplayBtn" class="primary" type="button">Open Replay Workspace</button>
+        <section class="hero-card expectation-shell">
+          <p class="context-pill">Expectation · Probability · Context · Why</p>
+          <h2>Model Expectation Surface</h2>
+          <p class="muted">Prediction is expressed as uncertainty emerging from context. Replay compares expectation against what actually happened.</p>
+          <section class="expectation-editorial reveal-step">
+            <article class="expectation-line">
+              <p class="eyebrow">01 · EVENT</p>
+              <h3>Pre-ball replay expectation</h3>
+              <p>Start at a real historical state and see probability before reveal.</p>
+              <button id="predictToReplayBtn" class="quick-link" type="button">Open replay workspace -></button>
             </article>
-            <article class="launch-card">
-              <p class="eyebrow">PLAYER PREDICTION</p>
-              <h3>Player outcome context</h3>
-              <p>Use player intelligence and matchup evidence to understand likely outcomes.</p>
-              <button id="predictToPlayersBtn" type="button">Open Players</button>
+            <article class="expectation-line">
+              <p class="eyebrow">02 · ENTITY</p>
+              <h3>Player outcome intelligence</h3>
+              <p>Interrogate how player context and matchup shift expected outcomes.</p>
+              <button id="predictToPlayersBtn" class="quick-link" type="button">Open player dossier -></button>
             </article>
-            <article class="launch-card">
-              <p class="eyebrow">SCENARIO PREDICTION</p>
-              <h3>Ask MatchGenome what is likely next</h3>
-              <p>Use natural language for next-ball and prediction-change guidance.</p>
-              <button id="predictToAskBtn" type="button">Open Ask</button>
+            <article class="expectation-line">
+              <p class="eyebrow">03 · LANGUAGE</p>
+              <h3>Natural-language prediction probe</h3>
+              <p>Ask what is likely next and keep provenance in view.</p>
+              <button id="predictToAskBtn" class="quick-link" type="button">Open Ask surface -></button>
             </article>
-          </div>
+          </section>
         </section>
       </section>
 
       <section id="teamsView" class="view" hidden>
-        <section class="hero-card">
-          <h2>Team Intelligence</h2>
-          <p class="muted">Select team and season to inspect leadership, squad contribution, and context.</p>
+        <section class="hero-card temporal-team-shell">
+          <p class="context-pill">Team -> Season -> Leadership -> Squad -> Performance</p>
+          <h2>Team Intelligence Timeline</h2>
+          <p class="muted">Teams are temporal entities: team -> season -> leadership -> performance -> evolution.</p>
           <div class="search-row">
             <select id="teamsSelect"></select>
             <select id="teamSeasonSelect"></select>
@@ -195,9 +207,10 @@
       </section>
 
       <section id="statsView" class="view" hidden>
-        <section class="hero-card">
-          <h2>Stats</h2>
-          <p class="muted">Season-aware statistics with trust context, leaderboards, and points-table intelligence.</p>
+        <section class="hero-card pattern-shell">
+          <p class="context-pill">Patterns · Rankings · Context · Evidence</p>
+          <h2>Pattern Exploration</h2>
+          <p class="muted">Start with what you are looking for, then move through player, team, season, and category signals.</p>
           <div class="search-row">
             <select id="statsSeasonSelect"></select>
             <button id="statsRefreshBtn" type="button">Refresh</button>
@@ -236,8 +249,8 @@
         <h2 class="sr-only">Match Discovery</h2>
         <section class="time-machine-layout">
           <aside class="discovery-pane">
-            <h3>Match Discovery</h3>
-            <p class="muted">Select a real IPL match, then replay each delivery as MatchGenome would have seen it.</p>
+            <h3>Event Discovery</h3>
+            <p class="muted">Select a real IPL match, then move through deliveries as a decision landscape.</p>
             <p id="teamDataNotice" class="muted" hidden></p>
             <div class="discovery-controls">
               <label>Season <select id="seasonSelect"></select></label>
@@ -253,7 +266,8 @@
 
           <section id="replayPanel" class="workspace-pane" hidden>
             <header class="workspace-header">
-              <h3 id="matchTitle">Replay Workspace</h3>
+              <p class="context-pill">Expectation -> Reveal -> Actual -> Evidence</p>
+              <h3 id="matchTitle">Decision Landscape</h3>
               <div id="replayBanner" hidden></div>
               <p id="matchSubline" class="muted">Select a match to begin.</p>
               <p id="replayTeamNotice" class="muted" hidden></p>
@@ -275,7 +289,7 @@
 
             <section id="panelPrediction" class="workspace-panel">
               <article class="prediction-hero">
-                <h4>Before the Ball</h4>
+                <h4>Current Delivery Context</h4>
                 <div class="versus">
                   <button id="batterValue" class="link-btn" type="button">-</button>
                   <span>vs</span>
@@ -285,7 +299,7 @@
                 <p><strong id="stateScoreValue">-</strong>/<strong id="stateWicketsValue">-</strong> · <strong id="stateBallsValue">-</strong> · <strong id="phaseValue">-</strong></p>
                 <p class="muted">CRR <strong id="stateRrValue">-</strong> · RRR <strong id="stateReqRrValue">-</strong> · Pressure <strong id="statePressureValue">-</strong></p>
 
-                <h4>MATCHGENOME EXPECTS</h4>
+                <h4>MatchGenome Expects</h4>
                 <p class="hero-result"><span id="predictedTop">-</span><small id="predictedPct">-</small></p>
                 <div id="probabilityBars" class="probability-bars"></div>
                 <div id="whyBlock" class="explain-block">Generate a prediction to see the evidence narrative.</div>
@@ -341,13 +355,14 @@
       </section>
 
       <section id="playerView" class="view" hidden>
-        <section class="player-layout">
+        <section class="player-layout dossier-shell">
           <aside class="player-search-pane">
+            <p class="context-pill">Identity · Arc · Matchups · Moments</p>
             <div class="title-row">
-              <h2>Player Intelligence</h2>
+              <h2>Player Intelligence Dossier</h2>
               <button id="backToReplayBtn" type="button">Back to Match</button>
             </div>
-            <p class="muted">Search a player or jump in from Replay and Ask context.</p>
+            <p class="muted">Search a player or move here from Ask/Replay while preserving context.</p>
             <div class="search-row">
               <input id="playerSearchInput" type="search" placeholder="Search players (Kohli, Dhoni, Bumrah...)" />
               <button id="playerSearchBtn" type="button">Search</button>
@@ -357,7 +372,7 @@
           </aside>
 
           <section class="player-profile-pane">
-            <div id="playerPrompt" class="panel-block">Open a player from search, Ask MatchGenome, or the replay workspace.</div>
+            <div id="playerPrompt" class="panel-block">Open a player from search, Ask MatchGenome, or the replay workspace to start an intelligence dossier.</div>
             <div id="playerPanel" hidden>
               <header class="player-hero">
                 <img id="playerPhoto" class="avatar avatar-photo" alt="" src="/assets/players/placeholder.svg" hidden />
