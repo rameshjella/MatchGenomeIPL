@@ -12,7 +12,7 @@
         <div class="brand-block">
           <p class="eyebrow">MATCHGENOME</p>
           <h1>Know the game. Before it happens.</h1>
-          <p class="lede">IPL intelligence across knowledge, match context, prediction, and historical replay.</p>
+          <p class="lede">Know IPL history, understand context, ask better questions, and replay critical moments with evidence.</p>
         </div>
         <nav class="mode-nav" aria-label="Product navigation">
           <button id="goHomeBtn" type="button" class="primary">Home</button>
@@ -22,7 +22,7 @@
           <button id="goStatsBtn" type="button">Stats</button>
           <button id="goPredictBtn" type="button">Predict</button>
           <button id="goReplayBtn" type="button">Replay</button>
-          <button id="goAskBtn" type="button">Ask MatchGenome</button>
+          <button id="goAskBtn" type="button" class="ask-entry">Ask MatchGenome</button>
         </nav>
       </header>
 
@@ -30,13 +30,14 @@
 
       <section id="homeView" class="view">
         <section class="hero-card">
-          <h2>MATCHGENOME</h2>
-          <p class="headline">Know the game. Before it happens.</p>
-          <p class="muted">A unified IPL intelligence workspace for knowledge, context, prediction, and replay.</p>
+          <h2>Intelligence Launchpad</h2>
+          <p class="headline">Understand what matters now. Explore what is likely next.</p>
+          <p class="muted">MatchGenome connects knowledge, context, prediction, and replay into one IPL intelligence experience.</p>
           <div class="search-row">
-            <input id="homeAskInput" type="search" placeholder="Ask anything about the IPL..." />
+            <input id="homeAskInput" type="search" placeholder="Ask anything about the IPL..." aria-label="Ask anything about the IPL" />
             <button id="homeAskBtn" class="primary" type="button">Ask</button>
           </div>
+          <div class="ask-prompt-strip" id="homeAskPrompts"></div>
           <div class="launch-grid">
             <article class="launch-card">
               <p class="eyebrow">CURRENT CONTEXT</p>
@@ -54,9 +55,21 @@
               <p id="homeSeasonStatus" class="muted">Loading...</p>
             </article>
           </div>
-          <div class="panel-block" id="homeSignals">
+          <div class="panel-block emphasis" id="homeSignals">
             <p class="eyebrow">GENOME SIGNALS</p>
-            <p class="muted">Loading form, matchup, momentum, and replay signals...</p>
+            <p class="muted">Loading form, matchup, momentum, and pressure signals...</p>
+          </div>
+          <div class="launch-grid dual-grid">
+            <article class="panel-block" id="homeFeaturedMatch">
+              <p class="eyebrow">MATCH INTELLIGENCE</p>
+              <h3>Featured Match</h3>
+              <p class="muted">Loading match context...</p>
+            </article>
+            <article class="panel-block" id="homeTopPerformers">
+              <p class="eyebrow">TOP PERFORMERS</p>
+              <h3>Season Leaders</h3>
+              <p class="muted">Loading leaders...</p>
+            </article>
           </div>
           <div class="launch-grid">
             <article class="launch-card">
@@ -79,6 +92,10 @@
             </article>
           </div>
           <div class="panel-block">
+            <p class="eyebrow">DISCOVERY</p>
+            <div class="discovery-strip" id="homeDiscoveryStrip"></div>
+          </div>
+          <div class="panel-block">
             <p class="eyebrow">TIME MACHINE</p>
             <div class="search-row">
               <select id="homeReplaySeasonSelect"></select>
@@ -92,9 +109,9 @@
         <section class="ask-layout">
           <article class="ask-composer">
             <h2>Ask MatchGenome</h2>
-            <p class="muted">Universal IPL knowledge: players, teams, fixtures, results, records, prediction, and replay context.</p>
+            <p class="muted">Ask anything about IPL. Get an answer first, then context, evidence, and provenance.</p>
             <label class="sr-only" for="askInput">Question</label>
-            <textarea id="askInput" rows="5" placeholder="How many sixes did Dhoni hit in 2014?"></textarea>
+            <textarea id="askInput" rows="5" placeholder="Ask anything about the IPL..."></textarea>
             <div class="row-actions">
               <button id="askSubmitBtn" class="primary" type="button">Ask</button>
             </div>
@@ -166,8 +183,8 @@
 
       <section id="teamsView" class="view" hidden>
         <section class="hero-card">
-          <h2>Teams</h2>
-          <p class="muted">Team overview, season leadership, and full squad contribution details.</p>
+          <h2>Team Intelligence</h2>
+          <p class="muted">Select team and season to inspect leadership, squad contribution, and context.</p>
           <div class="search-row">
             <select id="teamsSelect"></select>
             <select id="teamSeasonSelect"></select>
@@ -180,7 +197,7 @@
       <section id="statsView" class="view" hidden>
         <section class="hero-card">
           <h2>Stats</h2>
-          <p class="muted">Trusted IPL definitions with season-aware leaderboards, trajectories, and points-table context.</p>
+          <p class="muted">Season-aware statistics with trust context, leaderboards, and points-table intelligence.</p>
           <div class="search-row">
             <select id="statsSeasonSelect"></select>
             <button id="statsRefreshBtn" type="button">Refresh</button>
@@ -220,7 +237,7 @@
         <section class="time-machine-layout">
           <aside class="discovery-pane">
             <h3>Match Discovery</h3>
-            <p class="muted">Find a real IPL match by season, team, date, player, or match number.</p>
+            <p class="muted">Select a real IPL match, then replay each delivery as MatchGenome would have seen it.</p>
             <p id="teamDataNotice" class="muted" hidden></p>
             <div class="discovery-controls">
               <label>Season <select id="seasonSelect"></select></label>
@@ -268,7 +285,7 @@
                 <p><strong id="stateScoreValue">-</strong>/<strong id="stateWicketsValue">-</strong> · <strong id="stateBallsValue">-</strong> · <strong id="phaseValue">-</strong></p>
                 <p class="muted">CRR <strong id="stateRrValue">-</strong> · RRR <strong id="stateReqRrValue">-</strong> · Pressure <strong id="statePressureValue">-</strong></p>
 
-                <h4>MATCHGENOME PREDICTS</h4>
+                <h4>MATCHGENOME EXPECTS</h4>
                 <p class="hero-result"><span id="predictedTop">-</span><small id="predictedPct">-</small></p>
                 <div id="probabilityBars" class="probability-bars"></div>
                 <div id="whyBlock" class="explain-block">Generate a prediction to see the evidence narrative.</div>
@@ -284,7 +301,7 @@
               </article>
 
               <article class="reveal-hero">
-                <h4>The Ball Happened</h4>
+                <h4>What Actually Happened</h4>
                 <div id="actualBlock" class="actual-block">Reveal the ball to see actual outcome.</div>
               </article>
             </section>
@@ -330,7 +347,7 @@
               <h2>Player Intelligence</h2>
               <button id="backToReplayBtn" type="button">Back to Match</button>
             </div>
-            <p class="muted">Search players or jump from Time Machine and Ask results.</p>
+            <p class="muted">Search a player or jump in from Replay and Ask context.</p>
             <div class="search-row">
               <input id="playerSearchInput" type="search" placeholder="Search players (Kohli, Dhoni, Bumrah...)" />
               <button id="playerSearchBtn" type="button">Search</button>

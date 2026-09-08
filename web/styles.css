@@ -10,6 +10,7 @@
   --accent: #f6be4f;
   --good: #1f9d57;
   --bad: #cc4d4d;
+  --focus: #7ea2ff;
 }
 
 * {
@@ -18,7 +19,7 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top left, #121a33 0%, var(--bg) 45%);
+  background: radial-gradient(circle at top left, #121a33 0%, var(--bg) 42%);
   color: var(--text);
   font-family: "Inter", "Segoe UI", Arial, sans-serif;
   line-height: 1.45;
@@ -27,9 +28,9 @@ body {
 }
 
 .app {
-  max-width: 1480px;
+  max-width: 1380px;
   margin: 0 auto;
-  padding: 12px;
+  padding: 14px;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
@@ -48,21 +49,26 @@ body {
 .status {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 9px;
+  border-radius: 12px;
+  padding: 12px;
 }
 
 .top-shell {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
-  padding: 10px 12px;
+  padding: 12px 14px;
 }
 
 .brand-block h1 {
-  margin: 4px 0 0;
-  font-size: clamp(1.1rem, 1.4vw, 1.45rem);
+  margin: 4px 0 2px;
+  font-size: clamp(1.14rem, 1.5vw, 1.58rem);
+}
+
+.brand-block .lede {
+  max-width: 72ch;
+  font-size: 0.92rem;
 }
 
 .lede,
@@ -80,10 +86,24 @@ body {
 
 .mode-nav {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: nowrap;
   overflow-x: auto;
   min-width: 0;
+}
+
+.mode-nav button {
+  transition: border-color 140ms ease, transform 140ms ease, background-color 140ms ease;
+}
+
+.mode-nav button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.ask-entry {
+  background: linear-gradient(120deg, #3c5ea8, #466fe0);
+  border-color: #4f77df;
+  color: #fff;
 }
 
 .mode-nav button {
@@ -93,7 +113,7 @@ body {
 
 .view {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   min-height: 0;
   overflow: auto;
 }
@@ -115,7 +135,8 @@ body {
 .headline {
   margin: 0;
   color: #d9e3ff;
-  font-weight: 600;
+  font-weight: 560;
+  font-size: clamp(1.03rem, 1.2vw, 1.2rem);
 }
 
 .launch-grid {
@@ -124,15 +145,34 @@ body {
   gap: 10px;
 }
 
+.dual-grid {
+  grid-template-columns: 1.35fr 1fr;
+}
+
 .launch-card,
 .panel-block,
 .explain-block {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 12px;
+  padding: 11px;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.launch-card,
+.panel-block {
+  transition: border-color 140ms ease, transform 140ms ease, background-color 140ms ease;
+}
+
+.launch-card:hover,
+.panel-block:hover {
+  border-color: #415886;
+}
+
+.emphasis {
+  border-color: #4f669c;
+  background: linear-gradient(180deg, #1b2742 0%, var(--surface-soft) 100%);
 }
 
 .launch-card h3,
@@ -156,10 +196,10 @@ select,
 textarea,
 button {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--surface-muted);
   color: var(--text);
-  padding: 10px;
+  padding: 9px 10px;
   font-size: 0.94rem;
 }
 
@@ -180,7 +220,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 summary:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -209,18 +249,25 @@ button:disabled {
 .time-machine-layout,
 .player-layout {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   min-height: 0;
 }
 
 .ask-layout {
-  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(320px, 0.85fr) minmax(0, 1.15fr);
 }
 
 .ask-examples {
   margin-top: 10px;
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.ask-examples button {
+  font-size: 0.84rem;
+  padding: 7px 10px;
+  border-radius: 999px;
 }
 
 .ask-examples button,
@@ -231,10 +278,34 @@ button:disabled {
 
 .ask-result-card {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 10px;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px;
+  background: #141d33;
+}
+
+.ask-result-card .answer-lead {
+  font-size: 1.05rem;
+  color: #f1f5ff;
+}
+
+.ask-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trust-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 0.77rem;
+  color: #d4ddf6;
+  background: #1b2743;
 }
 
 .time-machine-layout {
@@ -288,12 +359,37 @@ button:disabled {
   overflow: visible;
 }
 
+.hero-card h2 {
+  margin-bottom: 2px;
+}
+
+.hero-card > .muted,
+.hero-card > .headline {
+  margin-bottom: 6px;
+}
+
+.ask-prompt-strip,
+.discovery-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quick-link {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #1a2640;
+  color: #dde7ff;
+  font-size: 0.83rem;
+  padding: 6px 10px;
+}
+
 .workspace-pane {
   align-content: start;
 }
 
 #askInput {
-  min-height: 220px;
+  min-height: 170px;
   width: 100%;
 }
 
@@ -308,7 +404,7 @@ button:disabled {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 10px;
+  padding: 9px;
   text-align: left;
   display: grid;
   gap: 6px;
@@ -335,7 +431,7 @@ button:disabled {
   justify-content: space-between;
   gap: 8px;
   align-items: center;
-  font-weight: 600;
+  font-weight: 560;
 }
 
 .match-teams strong {
@@ -345,8 +441,8 @@ button:disabled {
 }
 
 .team-logo {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   object-fit: contain;
 }
 
@@ -356,8 +452,8 @@ button:disabled {
 }
 
 .team-logo-fallback {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
   display: inline-grid;
   place-items: center;
@@ -398,13 +494,13 @@ button:disabled {
 
 .fixture-detail-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr 1.1fr;
   gap: 8px;
 }
 
 .workspace-header {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   border-bottom: 1px solid var(--line);
   padding-bottom: 8px;
   min-width: 0;
@@ -412,7 +508,7 @@ button:disabled {
 
 .header-metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(106px, 1fr));
   gap: 6px;
 }
 
@@ -437,6 +533,11 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.workspace-tabs .tab-btn {
+  padding: 7px 10px;
+  font-size: 0.86rem;
+}
+
 .tab-btn.active {
   border-color: var(--primary);
 }
@@ -458,7 +559,7 @@ button:disabled {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 10px;
+  padding: 11px;
   display: grid;
   gap: 10px;
   min-width: 0;
@@ -473,7 +574,7 @@ button:disabled {
 }
 
 .hero-result {
-  font-size: 1.7rem;
+  font-size: 1.58rem;
   font-weight: 700;
   display: flex;
   gap: 10px;
@@ -492,7 +593,7 @@ button:disabled {
 
 .prob-row {
   display: grid;
-  grid-template-columns: 90px 1fr 60px;
+  grid-template-columns: 102px 1fr 64px;
   gap: 8px;
   align-items: center;
 }
@@ -535,7 +636,7 @@ button:disabled {
   border: 1px dashed var(--line);
   border-radius: 8px;
   padding: 10px;
-  min-height: 150px;
+  min-height: 124px;
 }
 
 .actual-block.correct {
@@ -622,7 +723,7 @@ button:disabled {
 .search-row {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
   min-width: 0;
 }
 
@@ -677,7 +778,7 @@ button:disabled {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 10px;
+  padding: 11px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 12px;
@@ -717,7 +818,7 @@ button:disabled {
 .stats-grid {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .avatar {
@@ -799,6 +900,14 @@ button:disabled {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dual-grid {
+    grid-template-columns: 1fr;
+  }
+
   .discovery-controls {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -820,6 +929,10 @@ button:disabled {
     flex: 1 1 46%;
   }
 
+  .ask-entry {
+    flex-basis: 100%;
+  }
+
   .view,
   .ask-layout,
   .time-machine-layout,
@@ -835,6 +948,11 @@ button:disabled {
   .stats-grid,
   .header-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .quick-link {
+    width: 100%;
+    text-align: left;
   }
 
   .hero-result {

@@ -84,6 +84,10 @@ const els = {
   homeSignals: document.getElementById("homeSignals"),
   homeReplaySeasonSelect: document.getElementById("homeReplaySeasonSelect"),
   homeReplayBtn: document.getElementById("homeReplayBtn"),
+  homeAskPrompts: document.getElementById("homeAskPrompts"),
+  homeFeaturedMatch: document.getElementById("homeFeaturedMatch"),
+  homeTopPerformers: document.getElementById("homeTopPerformers"),
+  homeDiscoveryStrip: document.getElementById("homeDiscoveryStrip"),
 
   askInput: document.getElementById("askInput"),
   askSubmitBtn: document.getElementById("askSubmitBtn"),
@@ -298,6 +302,15 @@ function metricDisplay(value) {
   return value === null || value === undefined ? "-" : String(value);
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function capitalize(value) {
   if (!value) return "-";
   return `${value}`.charAt(0).toUpperCase() + `${value}`.slice(1);
@@ -344,10 +357,14 @@ function formatMatchCard(item) {
   const active = state.selectedFixtureMatchId === matchId ? "active" : "";
   return `
     <article class='panel-block fixture-card ${active}' data-match-id='${matchId}'>
-      <p><strong>${teamLabel(item.team_a, "Team A")} vs ${teamLabel(item.team_b, "Team B")}</strong></p>
-      <p class='muted'>IPL ${item.season_id} · Match ${item.match_number || "-"} · ${item.match_date || "Date unknown"}</p>
-      <p class='muted'>${item.venue || "Venue unknown"}${item.city ? `, ${item.city}` : ""}</p>
-      <p class='muted'>${item.status} · ${winner}</p>
+      <div class='match-teams'>
+        <strong>${renderTeamLogo(teamLabel(item.team_a, "Team A"))} <span>${teamLabel(item.team_a, "Team A")}</span></strong>
+        <span>vs</span>
+        <strong><span>${teamLabel(item.team_b, "Team B")}</span> ${renderTeamLogo(teamLabel(item.team_b, "Team B"))}</strong>
+      </div>
+      <p class='muted'>${item.match_date || "Date unknown"} · IPL ${item.season_id} · Match ${item.match_number || "-"}</p>
+      <p class='muted'>${item.venue || "Venue unavailable"}${item.city ? `, ${item.city}` : ""}</p>
+      <p class='muted'>${capitalize(item.status)} · ${winner}</p>
       <div class='row-actions'><button type='button' class='fixture-open-chip' data-match-id='${matchId}'>Open match details</button></div>
     </article>
   `;
@@ -392,6 +409,7 @@ function setStatsTab(tab) {
   tabs.forEach(([btn, panel, active]) => {
     if (!btn || !panel) return;
     btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
     panel.hidden = !active;
   });
 }
@@ -567,12 +585,29 @@ async function loadTeamDetails() {
   const info = payload.team || {};
   const seasonInfo = payload.season || {};
   const squad = Array.isArray(payload.squad) ? payload.squad : [];
+  const leader = {
+    captain: seasonInfo.captain || "Not available for this season",
+    coach: seasonInfo.coach || "Not available for this season",
+    owner: seasonInfo.owner || "Not available for this season",
+  };
+  const trust = String(seasonInfo.verification_status || info.verification_status || "unavailable").toLowerCase();
+  const trustLabel = trust === "verified" ? "Verified" : trust === "provisional" ? "Provisional" : "Reference unavailable";
+  const sourceLabel = seasonInfo.source || info.source || "Local knowledge layer";
+  const trustNote = trust === "verified" ? "Leadership from verified season knowledge." : "Verified leadership is not currently available for this season.";
   els.teamDetails.innerHTML = `
-    <p><strong>${info.name || team}</strong></p>
-    <p class='muted'>Short: ${info.short_name || "-"} · Home: ${info.home_venue || "-"}</p>
-    <p>Season ${season}: Captain ${seasonInfo.captain || "Unknown"}, Coach ${seasonInfo.coach || "Unknown"}, Owner ${seasonInfo.owner || "Unknown"}</p>
-    <p class='muted'>Source: ${seasonInfo.source || info.source || "-"} · Verification: ${seasonInfo.verification_status || info.verification_status || "-"}</p>
-    <h4>Squad snapshot</h4>
+    <div class='title-row'>
+      <p><strong>${info.name || team}</strong></p>
+      <span class='trust-chip'>${trustLabel}</span>
+    </div>
+    <p class='muted'>Season ${season} · ${info.short_name || "-"} · Home venue ${info.home_venue || "Not available"}</p>
+    <div class='stats-grid'>
+      <div><span>Captain</span><strong>${leader.captain}</strong></div>
+      <div><span>Coach</span><strong>${leader.coach}</strong></div>
+      <div><span>Owner</span><strong>${leader.owner}</strong></div>
+      <div><span>Source</span><strong>${sourceLabel}</strong></div>
+    </div>
+    <p class='muted'>${trustNote}</p>
+    <h4>Squad contribution snapshot</h4>
     ${squad.length
       ? `<div class='table-wrap'><table class='mini-table'><thead><tr><th>Player</th><th>Matches</th><th>Innings</th><th>Balls</th><th>Runs</th><th>Wickets</th></tr></thead><tbody>${squad
           .map(
@@ -601,6 +636,15 @@ async function loadStatsWorkspace() {
   const top = await api.get(`/api/stats/top-performers?season_id=${season}&limit=5`);
   const lb = board.leaderboards || {};
   const cov = overview.coverage || {};
+  const trust = cov.trust_dimensions || {};
+  const overallTrust = trust.overall_trust || "UNTRUSTED";
+  const trustLabel = {
+    TRUSTED_OFFICIAL_RECONCILED: "Officially reconciled",
+    TRUSTED_INTERNAL_WITH_DEFINITION_NOTE: "Officially reconciled with definition note",
+    TRUSTED_INTERNAL: "Internally validated",
+    REFERENCE_LIMITED: "Reference limited",
+    UNTRUSTED: "Untrusted",
+  }[overallTrust] || "Internally validated";
   const coverageFlag = cov.metadata_matches && cov.deliveries_matches && cov.metadata_matches >= cov.deliveries_matches ? "High" : "Partial";
   const renderBoard = (title, rows, qualifier = "") => `
     <article class='panel-block'>
@@ -612,6 +656,7 @@ async function loadStatsWorkspace() {
 
   els.statsOverviewBlock.innerHTML = `
     <h4>Season ${season} Trust Snapshot</h4>
+    <p class='muted'>${trustLabel}. ${trust.trust_statement || ""}</p>
     <div class='stats-grid'>
       <div><span>Matches</span><strong>${metricDisplay(overview.matches)}</strong></div>
       <div><span>Innings</span><strong>${metricDisplay(overview.innings)}</strong></div>
@@ -687,6 +732,23 @@ async function loadHomeLaunchpad() {
   const topRun = (((topPayload.top_performers || {}).runs || [])[0]) || null;
   const topWicket = (((topPayload.top_performers || {}).wickets || [])[0]) || null;
   const coverage = overviewPayload.coverage || {};
+  const trust = coverage.trust_dimensions || {};
+
+  const prompts = [
+    "Who dominated the powerplay in IPL 2024?",
+    "What changed in the 2024 final?",
+    "Who performs best against spin?",
+    "What is likely to happen next?",
+  ];
+  if (els.homeAskPrompts) {
+    els.homeAskPrompts.innerHTML = prompts.map((text) => `<button type='button' class='quick-link home-prompt'>${escapeHtml(text)}</button>`).join("");
+    els.homeAskPrompts.querySelectorAll(".home-prompt").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        els.askInput.value = btn.textContent || "";
+        setRoute({ view: "ask" });
+      });
+    });
+  }
 
   if (els.homeUpcoming) {
     els.homeUpcoming.textContent = upcoming
@@ -709,7 +771,69 @@ async function loadHomeLaunchpad() {
     const trustSignal = coverage.deliveries_matches
       ? `Season coverage: ${coverage.deliveries_matches} matches in deliveries${coverage.metadata_matches ? `, ${coverage.metadata_matches} with metadata` : ""}.`
       : "Season coverage unavailable.";
-    els.homeSignals.innerHTML = `<p class='eyebrow'>GENOME SIGNALS</p><p>${runSignal}</p><p>${wicketSignal}</p><p>${trustSignal}</p><p class='muted'>Use Replay for similar situations and pre-ball prediction checks.</p>`;
+    const trustBadge = trust.overall_trust === "TRUSTED_INTERNAL_WITH_DEFINITION_NOTE" ? "Officially reconciled with definition note" : "Internally validated";
+    els.homeSignals.innerHTML = `<p class='eyebrow'>GENOME SIGNALS</p><p>${runSignal}</p><p>${wicketSignal}</p><p>${trustSignal}</p><p class='muted'>Trust: ${trustBadge}. Replay lets you test prediction vs reality ball by ball.</p>`;
+  }
+
+  if (els.homeFeaturedMatch) {
+    const featured = upcoming || latest || null;
+    if (!featured) {
+      els.homeFeaturedMatch.innerHTML = "<p class='eyebrow'>MATCH INTELLIGENCE</p><h3>Featured Match</h3><p class='muted'>Verified information is not currently available.</p>";
+    } else {
+      const matchId = Number(featured.match_id || 0);
+      els.homeFeaturedMatch.innerHTML = `
+        <p class='eyebrow'>MATCH INTELLIGENCE</p>
+        <h3>${teamLabel(featured.team_a, "Team A")} vs ${teamLabel(featured.team_b, "Team B")}</h3>
+        <p class='muted'>${featured.match_date || "Date unavailable"} · IPL ${featured.season_id} · Match ${featured.match_number || "-"}</p>
+        <p class='muted'>${featured.venue || "Venue unavailable"}${featured.city ? `, ${featured.city}` : ""}</p>
+        <div class='row-actions'>
+          <button type='button' class='primary' id='homeOpenFeaturedMatchBtn'>Explore match</button>
+          <button type='button' id='homeReplayFeaturedMatchBtn'>Replay</button>
+          <button type='button' id='homeAskFeaturedMatchBtn'>Ask about this match</button>
+        </div>
+      `;
+      const openBtn = document.getElementById("homeOpenFeaturedMatchBtn");
+      const replayBtn = document.getElementById("homeReplayFeaturedMatchBtn");
+      const askBtn = document.getElementById("homeAskFeaturedMatchBtn");
+      if (openBtn) openBtn.addEventListener("click", () => setRoute({ view: "matches", match_id: matchId || "", season_id: featured.season_id || "" }));
+      if (replayBtn) replayBtn.addEventListener("click", () => setRoute({ view: "replay", match_id: matchId || "", season_id: featured.season_id || "" }));
+      if (askBtn) askBtn.addEventListener("click", () => {
+        els.askInput.value = `What happened in IPL ${featured.season_id} match ${featured.match_number || matchId}?`;
+        setRoute({ view: "ask" });
+      });
+    }
+  }
+
+  if (els.homeTopPerformers) {
+    els.homeTopPerformers.innerHTML = `
+      <p class='eyebrow'>TOP PERFORMERS</p>
+      <h3>Season Leaders</h3>
+      <p>${topRun ? `<strong>Runs:</strong> ${topRun.player} (${topRun.value})` : "Runs leader unavailable."}</p>
+      <p>${topWicket ? `<strong>Wickets:</strong> ${topWicket.player} (${topWicket.value})` : "Wickets leader unavailable."}</p>
+      <p class='muted'>Use Stats for full leaderboards and qualification rules.</p>
+      <div class='row-actions'><button type='button' id='homeTopToStatsBtn'>Open Stats</button></div>
+    `;
+    const statsBtn = document.getElementById("homeTopToStatsBtn");
+    if (statsBtn) statsBtn.addEventListener("click", () => setRoute({ view: "stats", tab: "batting", season_id: season || "" }));
+  }
+
+  if (els.homeDiscoveryStrip) {
+    els.homeDiscoveryStrip.innerHTML = `
+      <button type='button' class='quick-link' id='homeDiscoveryReplay'>Replay Time Machine</button>
+      <button type='button' class='quick-link' id='homeDiscoveryPlayers'>Player Intelligence</button>
+      <button type='button' class='quick-link' id='homeDiscoveryTeams'>Team Intelligence</button>
+      <button type='button' class='quick-link' id='homeDiscoveryStats'>Historical Stats</button>
+    `;
+    const map = [
+      ["homeDiscoveryReplay", { view: "replay" }],
+      ["homeDiscoveryPlayers", { view: "player" }],
+      ["homeDiscoveryTeams", { view: "teams" }],
+      ["homeDiscoveryStats", { view: "stats", tab: "overview", season_id: season || "" }],
+    ];
+    map.forEach(([id, route]) => {
+      const btn = document.getElementById(id);
+      if (btn) btn.addEventListener("click", () => setRoute(route));
+    });
   }
 }
 
@@ -1115,7 +1239,7 @@ function renderState(pred) {
   const matchNumber = selected ? selected.match_number || selected.season_match_number : null;
 
   els.matchTitle.textContent = title;
-  els.matchSubline.textContent = `${d.season_id} · Match ${matchNumber || "-"} · Match ID ${d.match_id}`;
+  els.matchSubline.textContent = `${d.season_id} · Match ${matchNumber || "-"}`;
   els.teamsValue.textContent = title;
   els.inningsValue.textContent = String(d.innings);
   els.scoreValue.textContent = `${s.score}/${s.wickets}`;
@@ -1517,20 +1641,44 @@ function renderAskResults(payload) {
 
       const evidence = item.result?.evidence || {};
       const player = maybePlayerFromAsk(item);
+      const seasonTrust = evidence.season_trust || {};
       const confidence = evidence.verification_status || (status === "ok" ? "derived" : "unverified");
       const source = evidence.source || "MatchGenome IPL database";
       const sourceUrl = evidence.source_url ? `<a href='${evidence.source_url}' target='_blank' rel='noreferrer noopener'>source</a>` : "local";
       const coverage = evidence.sample_size || evidence.matches || evidence.rows || "Available in local dataset";
+      const trustSummary = seasonTrust.overall_trust === "TRUSTED_OFFICIAL_RECONCILED"
+        ? "Official reference reconciled"
+        : seasonTrust.overall_trust === "TRUSTED_INTERNAL_WITH_DEFINITION_NOTE"
+          ? "Officially reconciled with definition note"
+          : seasonTrust.overall_trust === "TRUSTED_INTERNAL"
+            ? "Internally validated"
+            : seasonTrust.overall_trust === "UNTRUSTED"
+              ? "Untrusted"
+              : "Reference unavailable";
+
+      const entities = item.query_plan?.entities || {};
+      const entityButtons = [];
+      if (typeof entities.team === "string" && entities.team.trim()) {
+        entityButtons.push("<button type='button' class='ask-entity-link' data-route='teams'>Open Team Intelligence</button>");
+      }
+      if (player) {
+        entityButtons.push(`<button type='button' class='ask-player-link' data-player='${escapeHtml(player)}'>Open Player Intelligence</button>`);
+      }
+      if (Number(entities.season || 0)) {
+        entityButtons.push(`<button type='button' class='ask-season-link' data-season='${Number(entities.season)}'>Open Season Stats</button>`);
+      }
       return `<article class='ask-result-card'>
-        <p class='muted'>Question</p>
-        <p><strong>${item.question}</strong></p>
-        <p class='muted'>Answer</p>
-        ${formatAskValue(item.result?.value)}
-        <p class='muted'>Evidence</p>
+        <p class='muted'>${item.question}</p>
+        <div class='answer-lead'>${formatAskValue(item.result?.value)}</div>
         <p>${item.result?.label || "Answer from local IPL data."}</p>
-        <p class='muted'>Source: ${source} (${sourceUrl}) · Confidence: ${confidence} · Coverage: ${coverage}</p>
-        ${player ? `<div class='row-actions'><button type='button' class='ask-player-link' data-player='${player}'>Open Player Intelligence</button></div>` : ""}
-        <details><summary>Show evidence details</summary>${formatResolutionEntities((item.result && item.result.evidence) || {})}</details>
+        <div class='ask-meta-row'>
+          <span class='trust-chip'>${trustSummary}</span>
+          <span class='trust-chip'>Confidence: ${confidence}</span>
+          <span class='trust-chip'>Coverage: ${coverage}</span>
+        </div>
+        <p class='muted'>Source: ${source} (${sourceUrl})</p>
+        ${entityButtons.length ? `<div class='row-actions'>${entityButtons.join("")}</div>` : ""}
+        <details><summary>Show evidence and provenance</summary>${formatResolutionEntities((item.result && item.result.evidence) || {})}</details>
       </article>`;
     })
     .join("");
@@ -1541,6 +1689,15 @@ function renderAskResults(payload) {
       if (!player) return;
       setRoute({ view: "player", player });
     });
+  });
+  els.askResults.querySelectorAll(".ask-season-link").forEach((button) => {
+    button.addEventListener("click", () => {
+      const season = Number(button.getAttribute("data-season") || 0);
+      setRoute({ view: "stats", tab: "overview", season_id: season || "" });
+    });
+  });
+  els.askResults.querySelectorAll(".ask-entity-link").forEach((button) => {
+    button.addEventListener("click", () => setRoute({ view: "teams" }));
   });
 }
 
