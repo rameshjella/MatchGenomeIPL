@@ -13,7 +13,7 @@ if str(SRC) not in sys.path:
 from fixture_data import SAMPLE_CSV
 from matchgenomeipl.database import connect_db, initialize_schema
 from matchgenomeipl.ingestion import ingest_csv_to_sqlite
-from matchgenomeipl.ipl_knowledge import points_table, season_leaderboards, season_stats_overview, season_trust_status
+from matchgenomeipl.ipl_knowledge import points_table, season_leaderboards, season_stats_overview, season_trust_status, season_trust_dimensions
 
 
 class IplKnowledgeTests(unittest.TestCase):
@@ -103,6 +103,31 @@ class IplKnowledgeTests(unittest.TestCase):
         self.assertIsNotNone(untrusted)
         self.assertEqual(trusted["status"], "PASS")
         self.assertEqual(untrusted["status"], "FAIL")
+
+    def test_season_trust_dimensions_separate_internal_and_external(self) -> None:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO season_source_coverage(
+                season_id, source_key, expected_matches, local_matches, missing_matches, status,
+                verification_status, source_url, retrieved_at, notes
+            ) VALUES (2020, 'cricsheet_ipl_json', 1, 1, 0, 'complete', 'verified', 'https://example.invalid', CURRENT_TIMESTAMP, 'unit')
+            """
+        )
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO season_metric_reconciliation(
+                season_id, metric_name, source_key, local_value, reference_value, delta_value, relative_delta,
+                status, root_cause, definition_notes, source_url, retrieved_at, verification_status
+            ) VALUES (2020, 'runs', 'cricsheet_ipl_json', 100, 100, 0, 0, 'PASS', 'matched_cached_source', 'ok', 'https://example.invalid', CURRENT_TIMESTAMP, 'verified')
+            """
+        )
+        self.conn.commit()
+
+        trust = season_trust_dimensions(self.conn, 2020)
+        self.assertEqual(trust["source_status"], "SOURCE_COMPLETE")
+        self.assertEqual(trust["internal_validation_status"], "INTERNALLY_VALIDATED")
+        self.assertEqual(trust["external_reference_status"], "REFERENCE_UNAVAILABLE")
+        self.assertEqual(trust["overall_trust"], "TRUSTED_INTERNAL")
 
 
 if __name__ == "__main__":

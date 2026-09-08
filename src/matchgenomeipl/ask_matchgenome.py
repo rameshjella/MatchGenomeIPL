@@ -17,6 +17,7 @@ from .ipl_knowledge import (
     list_results,
     lookup_player_fact,
     points_table,
+    season_trust_dimensions,
     season_has_verified_complete_coverage,
     top_performers,
 )
@@ -1274,16 +1275,18 @@ class QueryExecutor:
             },
         }
 
-    def _season_verified_evidence(self, season: int | None) -> dict[str, Any]:
+    def _season_trust_evidence(self, season: int | None) -> dict[str, Any]:
         if not isinstance(season, int):
             return {}
         ok, details = season_has_verified_complete_coverage(self.conn, season)
-        if not ok:
-            return {}
+        trust_dimensions = season_trust_dimensions(self.conn, season)
+        if not ok and trust_dimensions.get("overall_trust") == "UNTRUSTED":
+            return {"season_trust": trust_dimensions}
         return {
-            "verification_status": "verified",
+            "verification_status": "internally_validated",
             "coverage": details.get("coverage"),
             "trust": details.get("trust"),
+            "season_trust": trust_dimensions,
         }
 
     def _build_batting_metrics_expr(self) -> dict[str, str]:
@@ -1375,7 +1378,7 @@ class QueryExecutor:
                     "source_tables": ["deliveries"],
                     "sample_size": legal_balls,
                     "calculation": "parameterized SQL aggregate over bowler deliveries",
-                    **self._season_verified_evidence(season),
+                    **self._season_trust_evidence(season),
                 },
             }
 
@@ -1425,7 +1428,7 @@ class QueryExecutor:
                 "season_scope": scope_parts,
                 "sample_size": base.get("balls", 0),
                 "calculation": "parameterized SQL aggregate over deliveries",
-                **self._season_verified_evidence(season),
+                **self._season_trust_evidence(season),
             },
         }
 
@@ -1586,7 +1589,7 @@ class QueryExecutor:
                     "source_tables": ["deliveries"],
                     "sample_size": sum(int(r["balls"]) for r in rows),
                     "calculation": "group by batter with bounded limit",
-                    **self._season_verified_evidence(season if isinstance(season, int) else None),
+                    **self._season_trust_evidence(season if isinstance(season, int) else None),
                 },
             }
 
@@ -1645,7 +1648,7 @@ class QueryExecutor:
                 "source_tables": ["deliveries", "match_team_map"],
                 "sample_size": sum(int(r["legal_balls"]) for r in rows),
                 "calculation": "group by bowler with bounded limit",
-                **self._season_verified_evidence(season if isinstance(season, int) else None),
+                **self._season_trust_evidence(season if isinstance(season, int) else None),
             },
         }
 

@@ -19,7 +19,7 @@ from matchgenomeipl.database import connect_db, initialize_schema
 from matchgenomeipl.ask_matchgenome import AskMatchGenomeEngine
 from matchgenomeipl.time_machine import TimeMachineService
 from matchgenomeipl.time_machine_api import TimeMachineAPI
-from matchgenomeipl.ipl_knowledge import season_stats_overview
+from matchgenomeipl.ipl_knowledge import season_stats_overview, season_trust_dimensions
 
 
 def _season_from_info(raw: Any) -> int | None:
@@ -383,11 +383,14 @@ def build_report(conn: sqlite3.Connection, zip_path: Path) -> dict[str, Any]:
         }
 
     forensic_2026 = _official_2026_forensics(conn, zip_path)
-    representative_e2e = _representative_end_to_end_validation(
-        conn,
-        zip_path,
-        [2008, 2012, 2016, 2019, 2023, 2024, 2025, 2026],
-    )
+    all_season_e2e = _season_end_to_end_validation(conn, zip_path, seasons)
+    trust_map = [
+        {
+            "season": season,
+            **season_trust_dimensions(conn, season),
+        }
+        for season in seasons
+    ]
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -401,11 +404,12 @@ def build_report(conn: sqlite3.Connection, zip_path: Path) -> dict[str, Any]:
         "metric_reconciliation": reconciliation,
         "discrepancy_2026": discrepancy_2026,
         "forensic_2026": forensic_2026,
-        "representative_end_to_end": representative_e2e,
+        "all_season_end_to_end": all_season_e2e,
+        "season_trust_map": trust_map,
     }
 
 
-def _representative_end_to_end_validation(conn: sqlite3.Connection, zip_path: Path, seasons: list[int]) -> dict[str, Any]:
+def _season_end_to_end_validation(conn: sqlite3.Connection, zip_path: Path, seasons: list[int]) -> dict[str, Any]:
     service = TimeMachineService(conn)
     api = TimeMachineAPI(service)
     ask = AskMatchGenomeEngine(conn)
@@ -466,6 +470,7 @@ def _representative_end_to_end_validation(conn: sqlite3.Connection, zip_path: Pa
     ask_checks: dict[str, Any] = {}
     questions = [
         'Who scored the most runs in IPL 2024?',
+        'Who scored the most runs in IPL 2015?',
         'Who scored the most runs in IPL 2026?',
         'Who is RCB captain?',
         'Who was RCB captain in 2016?',

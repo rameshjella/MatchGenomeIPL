@@ -12,6 +12,10 @@ from typing import Any
 from .constants import NON_BOWLER_WICKETS
 
 
+CRICSHEET_SOURCE_KEY = "cricsheet_ipl_json"
+OFFICIAL_REFERENCE_SOURCE_KEY = "ipl_official_reference_2026_examples"
+
+
 def _norm(value: str | None) -> str:
     raw = "" if value is None else str(value)
     lowered = raw.lower().replace(".", " ").replace("'", " ")
@@ -76,7 +80,7 @@ def season_trust_status(conn: sqlite3.Connection, season: int) -> dict[str, Any]
     ).fetchone()
     if row is None:
         return None
-    return {
+    trust = {
         "season_id": int(row["season_id"]),
         "coverage_status": str(row["coverage_status"]),
         "reconciliation_status": str(row["reconciliation_status"]),
@@ -87,12 +91,123 @@ def season_trust_status(conn: sqlite3.Connection, season: int) -> dict[str, Any]
         "retrieved_at": row["retrieved_at"],
         "verification_status": str(row["verification_status"]),
     }
+    trust["trust_dimensions"] = season_trust_dimensions(conn, season)
+    return trust
+
+
+def _metric_group_status(conn: sqlite3.Connection, season: int, source_key: str) -> tuple[str, int]:
+    rows = conn.execute(
+        """
+        SELECT status
+        FROM season_metric_reconciliation
+        WHERE season_id = ? AND source_key = ?
+        """,
+        (season, source_key),
+    ).fetchall()
+    if not rows:
+        return "REFERENCE_UNAVAILABLE", 0
+
+    statuses = {str(row["status"] or "").strip().upper() for row in rows}
+    if "FAIL" in statuses:
+        return "FAIL", len(rows)
+    if "PASS_WITH_DEFINITION_NOTE" in statuses:
+        return "PASS_WITH_DEFINITION_NOTE", len(rows)
+    if statuses == {"PASS"}:
+        return "PASS", len(rows)
+    return "REFERENCE_UNAVAILABLE", len(rows)
+
+
+def season_trust_dimensions(conn: sqlite3.Connection, season: int) -> dict[str, Any]:
+    gate_row = conn.execute(
+        """
+        SELECT coverage_status, reconciliation_status, status
+        FROM season_trust_gate
+        WHERE season_id = ?
+        LIMIT 1
+        """,
+        (season,),
+    ).fetchone()
+
+    coverage = season_coverage_status(conn, season)
+    source_complete = bool(
+        coverage
+        and str(coverage.get("status") or "").lower() == "complete"
+        and _is_verified(str(coverage.get("verification_status")))
+    )
+    if not source_complete and gate_row is not None:
+        source_complete = str(gate_row["coverage_status"] or "").strip().upper() == "PASS"
+    source_status = "SOURCE_COMPLETE" if source_complete else "FAIL"
+
+    internal_status_raw, internal_metrics_count = _metric_group_status(conn, season, CRICSHEET_SOURCE_KEY)
+    if internal_metrics_count == 0 and gate_row is not None:
+        if str(gate_row["reconciliation_status"] or "").strip().upper() in {"PASS", "PASS_WITH_DEFINITION_NOTE", "REFERENCE_UNAVAILABLE"}:
+            internal_status_raw = "PASS"
+    internal_status = "INTERNALLY_VALIDATED" if internal_status_raw in {"PASS", "PASS_WITH_DEFINITION_NOTE"} else "FAIL"
+
+    external_status_raw, external_metrics_count = _metric_group_status(conn, season, OFFICIAL_REFERENCE_SOURCE_KEY)
+    if external_status_raw == "PASS":
+        external_status = "OFFICIAL_RECONCILED"
+    elif external_status_raw == "PASS_WITH_DEFINITION_NOTE":
+        external_status = "PASS_WITH_DEFINITION_NOTE"
+    elif external_status_raw == "FAIL":
+        external_status = "FAIL"
+    else:
+        external_status = "REFERENCE_UNAVAILABLE"
+
+    definition_rows = conn.execute(
+        """
+        SELECT metric_name, source_key, definition_notes
+        FROM season_metric_reconciliation
+        WHERE season_id = ? AND status = 'PASS_WITH_DEFINITION_NOTE'
+        ORDER BY source_key, metric_name
+        """,
+        (season,),
+    ).fetchall()
+    definition_notes = [
+        {
+            "metric": str(row["metric_name"]),
+            "source": str(row["source_key"]),
+            "note": str(row["definition_notes"] or "").strip(),
+        }
+        for row in definition_rows
+    ]
+
+    if source_status == "FAIL" or internal_status == "FAIL":
+        overall = "UNTRUSTED"
+    elif external_status == "OFFICIAL_RECONCILED":
+        overall = "TRUSTED_OFFICIAL_RECONCILED"
+    elif external_status == "PASS_WITH_DEFINITION_NOTE":
+        overall = "TRUSTED_INTERNAL_WITH_DEFINITION_NOTE"
+    elif external_status == "REFERENCE_UNAVAILABLE":
+        overall = "TRUSTED_INTERNAL"
+    else:
+        overall = "UNTRUSTED"
+
+    return {
+        "season_id": season,
+        "source_status": source_status,
+        "internal_validation_status": internal_status,
+        "external_reference_status": external_status,
+        "internal_metric_rows": internal_metrics_count,
+        "external_metric_rows": external_metrics_count,
+        "definition_notes": definition_notes,
+        "overall_trust": overall,
+        "trust_statement": (
+            "MatchGenome is internally validated against its trusted historical ball-by-ball source; "
+            "independent official reconciliation is shown separately where available."
+        ),
+    }
 
 
 def season_has_verified_complete_coverage(conn: sqlite3.Connection, season: int) -> tuple[bool, dict[str, Any]]:
     trust = season_trust_status(conn, season)
     if trust is not None:
-        trusted = trust["status"] in {"PASS", "PASS_WITH_DEFINITION_NOTE"}
+        dimensions = trust.get("trust_dimensions") if isinstance(trust.get("trust_dimensions"), dict) else {}
+        trusted = dimensions.get("overall_trust") in {
+            "TRUSTED_INTERNAL",
+            "TRUSTED_INTERNAL_WITH_DEFINITION_NOTE",
+            "TRUSTED_OFFICIAL_RECONCILED",
+        } or trust["status"] in {"PASS", "PASS_WITH_DEFINITION_NOTE", "REFERENCE_UNAVAILABLE"}
         return trusted, {
             "reason": "ok" if trusted else str(trust.get("reason") or "season_not_trusted"),
             "season_id": season,
@@ -570,6 +685,7 @@ def season_stats_overview(conn: sqlite3.Connection, season: int) -> dict[str, An
     ).fetchone()
     authoritative_coverage = season_coverage_status(conn, season)
     trust_status = season_trust_status(conn, season)
+    trust_dimensions = season_trust_dimensions(conn, season)
 
     return {
         "season_id": season,
@@ -589,6 +705,7 @@ def season_stats_overview(conn: sqlite3.Connection, season: int) -> dict[str, An
             "completed_matches": int((coverage["completed_matches"] if coverage else 0) or 0),
             "authoritative": authoritative_coverage,
             "trust_gate": trust_status,
+            "trust_dimensions": trust_dimensions,
         },
         "definitions": {
             "dot_balls": "legal deliveries where total_runs == 0",

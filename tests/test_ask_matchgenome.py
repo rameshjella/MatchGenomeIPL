@@ -286,6 +286,39 @@ class AskMatchGenomeTests(unittest.TestCase):
         payload = self.engine.ask("Who scored the most runs in IPL 2020?")
         self.assertEqual(payload["results"][0]["status"], "ok")
         self.assertIsInstance(payload["results"][0]["result"]["value"], list)
+        season_trust = payload["results"][0]["result"]["evidence"].get("season_trust")
+        self.assertIsNotNone(season_trust)
+        self.assertEqual(season_trust["overall_trust"], "TRUSTED_INTERNAL")
+        self.assertEqual(season_trust["external_reference_status"], "REFERENCE_UNAVAILABLE")
+
+    def test_official_reference_definition_note_is_exposed_for_2026(self) -> None:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO season_trust_gate(
+                season_id, coverage_status, reconciliation_status, status, reason,
+                source_key, source_url, retrieved_at, verification_status
+            ) VALUES (2026, 'PASS', 'PASS_WITH_DEFINITION_NOTE', 'PASS_WITH_DEFINITION_NOTE', 'documented_definition_difference',
+                      'test_fixture', 'https://example.invalid', CURRENT_TIMESTAMP, 'verified')
+            """
+        )
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO season_metric_reconciliation(
+                season_id, metric_name, source_key, local_value, reference_value, delta_value, relative_delta,
+                status, root_cause, definition_notes, source_url, retrieved_at, verification_status
+            ) VALUES
+            (2026, 'runs', 'cricsheet_ipl_json', 1, 1, 0, 0, 'PASS', 'matched_cached_source', 'ok', 'https://example.invalid', CURRENT_TIMESTAMP, 'verified'),
+            (2026, 'dot_balls', 'ipl_official_reference_2026_examples', 5452, 5686, -234, -0.041, 'PASS_WITH_DEFINITION_NOTE', 'definition_or_scope_difference', 'dot-ball semantic difference', 'https://example.invalid', CURRENT_TIMESTAMP, 'verified')
+            """
+        )
+        self.conn.commit()
+        self.engine = AskMatchGenomeEngine(self.conn)
+
+        payload = self.engine.ask("Who scored the most runs in IPL 2026?")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        season_trust = payload["results"][0]["result"]["evidence"].get("season_trust")
+        self.assertEqual(season_trust["external_reference_status"], "PASS_WITH_DEFINITION_NOTE")
+        self.assertEqual(season_trust["overall_trust"], "TRUSTED_INTERNAL_WITH_DEFINITION_NOTE")
 
     def test_prediction_guidance_questions_are_supported(self) -> None:
         payload = self.engine.ask("What is likely to happen on the next ball?")

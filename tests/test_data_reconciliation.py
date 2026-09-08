@@ -80,20 +80,37 @@ class DataReconciliationTests(unittest.TestCase):
         self.assertEqual(wickets["local_canonical"], 837.0)
         self.assertEqual(wickets["exclude_super_over"], 835.0)
 
-    def test_representative_end_to_end_validation(self) -> None:
-        e2e = self.report["representative_end_to_end"]
+    def test_all_season_end_to_end_validation(self) -> None:
+        e2e = self.report["all_season_end_to_end"]
         seasons = e2e["seasons"]
-        self.assertEqual([row["season"] for row in seasons], [2008, 2012, 2016, 2019, 2023, 2024, 2025, 2026])
+        self.assertEqual([row["season"] for row in seasons], self.report["seasons_audited"])
         for row in seasons:
             self.assertTrue(row["source_complete"])
             self.assertTrue(row["db_equals_knowledge"])
             self.assertTrue(row["knowledge_equals_api"])
 
         ask_checks = e2e["ask_checks"]
+        self.assertEqual(ask_checks["Who scored the most runs in IPL 2015?"]["status"], "ok")
+        self.assertTrue(ask_checks["Who scored the most runs in IPL 2015?"]["value_present"])
         self.assertEqual(ask_checks["Who scored the most runs in IPL 2024?"]["status"], "ok")
         self.assertTrue(ask_checks["Who scored the most runs in IPL 2024?"]["value_present"])
         self.assertEqual(ask_checks["Who scored the most runs in IPL 2026?"]["status"], "ok")
         self.assertTrue(ask_checks["Who scored the most runs in IPL 2026?"]["value_present"])
+
+    def test_season_trust_map_distinguishes_internal_vs_official(self) -> None:
+        by_season = {row["season"]: row for row in self.report["season_trust_map"]}
+        season_2015 = by_season[2015]
+        season_2026 = by_season[2026]
+
+        self.assertEqual(season_2015["source_status"], "SOURCE_COMPLETE")
+        self.assertEqual(season_2015["internal_validation_status"], "INTERNALLY_VALIDATED")
+        self.assertEqual(season_2015["external_reference_status"], "REFERENCE_UNAVAILABLE")
+        self.assertEqual(season_2015["overall_trust"], "TRUSTED_INTERNAL")
+
+        self.assertEqual(season_2026["source_status"], "SOURCE_COMPLETE")
+        self.assertEqual(season_2026["internal_validation_status"], "INTERNALLY_VALIDATED")
+        self.assertEqual(season_2026["external_reference_status"], "PASS_WITH_DEFINITION_NOTE")
+        self.assertEqual(season_2026["overall_trust"], "TRUSTED_INTERNAL_WITH_DEFINITION_NOTE")
 
 
 if __name__ == "__main__":
