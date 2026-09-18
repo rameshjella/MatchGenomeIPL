@@ -170,6 +170,20 @@ Secrets are not logged; runtime does not emit credential values.
 .\start.ps1
 ```
 
+To open from another laptop on the same network (LAN), start with:
+
+```powershell
+.\start.ps1 -Lan
+```
+
+Optional explicit bind/port:
+
+```powershell
+.\start.ps1 -Host 0.0.0.0 -Port 8080
+```
+
+When LAN mode is used, startup logs print a URL you can open from another laptop.
+
 ### Linux/macOS
 
 ```bash

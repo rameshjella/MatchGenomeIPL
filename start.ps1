@@ -1,3 +1,9 @@
+param(
+    [string]$BindHost = "127.0.0.1",
+    [int]$Port = 8080,
+    [switch]$Lan
+)
+
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -20,7 +26,26 @@ if (Test-Path $VenvPython) {
 
 Write-Host "[STARTUP] MatchGenomeIPL"
 Write-Host "[ENV] Python executable: $PythonExe"
-Write-Host "[RUN] Starting Time Machine app..."
+
+if ($Lan.IsPresent) {
+    $BindHost = "0.0.0.0"
+}
+
+$env:MATCHGENOME_HOST = $BindHost
+$env:MATCHGENOME_PORT = [string]$Port
+
+Write-Host "[RUN] Starting Time Machine app on $($env:MATCHGENOME_HOST):$($env:MATCHGENOME_PORT)..."
+
+if ($env:MATCHGENOME_HOST -eq "0.0.0.0") {
+    $ipv4 = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike "169.254.*" -and $_.IPAddress -ne "127.0.0.1" } |
+        Select-Object -First 1 -ExpandProperty IPAddress)
+    if ($ipv4) {
+        Write-Host "[LAN] Open from another laptop: http://${ipv4}:$($env:MATCHGENOME_PORT)"
+    } else {
+        Write-Host "[LAN] Host is exposed on all interfaces. Use this machine's IPv4 address with port $($env:MATCHGENOME_PORT)."
+    }
+}
 
 & $PythonExe -c "import sys;import sqlite3" 2>$null
 if ($LASTEXITCODE -ne 0) {

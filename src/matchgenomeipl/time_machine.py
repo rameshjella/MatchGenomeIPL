@@ -431,11 +431,11 @@ class TimeMachineService:
             "squad": [
                 {
                     "player": r["player"],
-                    "balls": int(r["balls"]),
-                    "runs": int(r["runs"]),
-                    "wickets": int(r["wickets"]),
-                    "matches": int(r["matches"]),
-                    "innings": int(r["innings"]),
+                    "balls": int(r["balls"] or 0),
+                    "runs": int(r["runs"] or 0),
+                    "wickets": int(r["wickets"] or 0),
+                    "matches": int(r["matches"] or 0),
+                    "innings": int(r["innings"] or 0),
                 }
                 for r in squad_rows
             ],

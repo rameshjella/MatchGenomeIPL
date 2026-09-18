@@ -54,6 +54,9 @@ const state = {
   selectedFixtureMatchId: null,
   askContextQuestion: "",
   contextOrigin: "",
+  latestSeasonId: null,
+  homeSelectedSeason: null,
+  userCall: null,
 };
 
 const els = {
@@ -95,6 +98,10 @@ const els = {
   homeFeaturedMatch: document.getElementById("homeFeaturedMatch"),
   homeTopPerformers: document.getElementById("homeTopPerformers"),
   homeDiscoveryStrip: document.getElementById("homeDiscoveryStrip"),
+  homeSeasonTimeline: document.getElementById("homeSeasonTimeline"),
+  homeSeasonStory: document.getElementById("homeSeasonStory"),
+  homeContextPill: document.getElementById("homeContextPill"),
+  contextBreadcrumb: document.getElementById("contextBreadcrumb"),
 
   askInput: document.getElementById("askInput"),
   askSubmitBtn: document.getElementById("askSubmitBtn"),
@@ -140,6 +147,10 @@ const els = {
   statsRecordsBlock: document.getElementById("statsRecordsBlock"),
   statsGraphsBlock: document.getElementById("statsGraphsBlock"),
   pointsTableBlock: document.getElementById("pointsTableBlock"),
+  statsCompareSeasonA: document.getElementById("statsCompareSeasonA"),
+  statsCompareSeasonB: document.getElementById("statsCompareSeasonB"),
+  statsCompareBtn: document.getElementById("statsCompareBtn"),
+  statsCompareBlock: document.getElementById("statsCompareBlock"),
 
   seasonSelect: document.getElementById("seasonSelect"),
   matchSearchInput: document.getElementById("matchSearchInput"),
@@ -183,6 +194,8 @@ const els = {
   predictedTop: document.getElementById("predictedTop"),
   predictedPct: document.getElementById("predictedPct"),
   probabilityBars: document.getElementById("probabilityBars"),
+  userCallOptions: document.getElementById("userCallOptions"),
+  userCallSummary: document.getElementById("userCallSummary"),
   whyBlock: document.getElementById("whyBlock"),
   changeBlock: document.getElementById("changeBlock"),
   predictBtn: document.getElementById("predictBtn"),
@@ -198,6 +211,7 @@ const els = {
   progressFill: document.getElementById("progressFill"),
   timelineTrack: document.getElementById("timelineTrack"),
   ballByBallRows: document.getElementById("ballByBallRows"),
+  predictionLedger: document.getElementById("predictionLedger"),
 
   evidenceBlock: document.getElementById("evidenceBlock"),
   distributionBlock: document.getElementById("distributionBlock"),
@@ -208,6 +222,7 @@ const els = {
   playerSearchBtn: document.getElementById("playerSearchBtn"),
   playerSearchHint: document.getElementById("playerSearchHint"),
   playerSearchResults: document.getElementById("playerSearchResults"),
+  playerDiscovery: document.getElementById("playerDiscovery"),
   playerPrompt: document.getElementById("playerPrompt"),
   playerPanel: document.getElementById("playerPanel"),
   playerPhoto: document.getElementById("playerPhoto"),
@@ -274,9 +289,38 @@ function setRoute(route) {
   window.location.hash = params.toString();
 }
 
+function normalizeSeason(value) {
+  const num = Number(value || 0);
+  return Number.isFinite(num) && num > 0 ? num : null;
+}
+
+function latestSeasonFromState() {
+  const seasons = (state.seasons || []).map((s) => normalizeSeason(s.season_id)).filter(Boolean);
+  if (!seasons.length) return null;
+  return seasons.sort((a, b) => a - b)[seasons.length - 1];
+}
+
+function sanitizeUiError(message, fallback = "MatchGenome could not complete that step right now.") {
+  const text = String(message || "").trim();
+  if (!text) return fallback;
+  const blockedPatterns = [
+    /int\(\) argument/i,
+    /NoneType/i,
+    /Traceback/i,
+    /internal_error/i,
+    /invalid_request/i,
+    /Request failed:/i,
+  ];
+  if (blockedPatterns.some((pattern) => pattern.test(text))) {
+    return fallback;
+  }
+  return text;
+}
+
 function setStatus(message, kind = "info") {
   els.statusBanner.hidden = false;
-  els.statusBanner.textContent = message;
+  const fallback = kind === "error" ? "MatchGenome could not complete that step right now." : String(message || "");
+  els.statusBanner.textContent = kind === "error" ? sanitizeUiError(message, fallback) : String(message || "");
   els.statusBanner.style.borderLeftColor = kind === "error" ? "#cc4d4d" : "#5a84ff";
 }
 
@@ -334,6 +378,21 @@ function capitalize(value) {
   return `${value}`.charAt(0).toUpperCase() + `${value}`.slice(1);
 }
 
+function updateContextBreadcrumb() {
+  if (!els.contextBreadcrumb) return;
+  const bits = [];
+  const homeSeason = normalizeSeason(state.homeSelectedSeason || state.latestSeasonId);
+  if (homeSeason) bits.push(`IPL ${homeSeason}`);
+  if (state.selectedMatch) {
+    bits.push(matchTitleFromMeta(state.selectedMatch));
+    bits.push(`Match ${state.selectedMatch.match_number || state.selectedMatch.season_match_number || "-"}`);
+  }
+  if (state.lastPrediction?.delivery) {
+    bits.push(`${state.lastPrediction.delivery.over_number}.${state.lastPrediction.delivery.ball_number}`);
+  }
+  els.contextBreadcrumb.textContent = bits.length ? bits.join(" -> ") : "IPL Chronicle -> Match Moment -> Genome -> Forecast -> Reveal";
+}
+
 function setView(view) {
   state.view = view;
   const map = {
@@ -368,6 +427,7 @@ function setView(view) {
     button.setAttribute("aria-current", active ? "page" : "false");
   });
 
+  updateContextBreadcrumb();
   installRevealForView(view);
 }
 
@@ -540,75 +600,218 @@ async function loadFixtureDetail(matchId) {
   const askContext = state.contextOrigin === "ask" && state.askContextQuestion
     ? `<p class='muted'>Context: reached from Ask - "${escapeHtml(state.askContextQuestion)}"</p>`
     : "";
-  const inningsRows = (innings.innings || [])
-    .map((item) => `<li>Innings ${item.innings}: ${teamLabel(item.team_batting, "Team")} ${item.runs}/${item.wickets} in ${toOverNotation(item.legal_balls)} overs</li>`)
-    .join("");
+  const inningsRows = (innings.innings || []);
   const inningsScorecard = Array.isArray(scorecard.innings) ? scorecard.innings : [];
+  const firstInnings = inningsRows[0] || null;
+  const secondInnings = inningsRows[1] || null;
+  const stage = meta.match_type || "IPL";
+  const resultLine = outcome.winner
+    ? `${teamLabel(outcome.winner, "Winner")} won${outcome.result_margin ? ` by ${outcome.result_margin} ${outcome.result_type || ""}` : ""}`
+    : "Result pending";
+
+  const topBatter = inningsScorecard
+    .flatMap((item) => item.batting || [])
+    .sort((a, b) => Number(b.runs || 0) - Number(a.runs || 0))[0] || null;
+  const topBowler = inningsScorecard
+    .flatMap((item) => item.bowling || [])
+    .sort((a, b) => Number(b.wickets || 0) - Number(a.wickets || 0))[0] || null;
+
+  const turningPlayer = outcome.player_of_match || topBatter?.player || topBowler?.player || "Impact player unavailable";
+  const pressureGap = firstInnings && secondInnings ? Math.abs(Number(firstInnings.runs || 0) - Number(secondInnings.runs || 0)) : 0;
+  const lowEvidence = !outcome.player_of_match || !topBatter || !topBowler;
+
+  const moments = [
+    {
+      key: "toss",
+      label: "MATCH STATE",
+      marker: "PRE-MATCH",
+      event: toss.winner ? `${teamLabel(toss.winner, "Unknown")} won toss${toss.decision ? ` and chose ${toss.decision}` : ""}` : "Toss context unavailable",
+      impact: "Set opening match conditions",
+      player: toss.winner ? teamLabel(toss.winner, "Unknown") : "-",
+      signal: "Source: metadata toss record",
+      size: "base",
+    },
+    {
+      key: "innings1",
+      label: "SETUP",
+      marker: firstInnings ? `INN 1 · ${toOverNotation(firstInnings.legal_balls)}` : "INN 1",
+      event: firstInnings
+        ? `${teamLabel(firstInnings.team_batting, "Team")} posted ${firstInnings.runs}/${firstInnings.wickets}`
+        : "First-innings score context unavailable",
+      impact: secondInnings ? `Target created for chase (${Number(firstInnings?.runs || 0) + 1})` : "Target context unavailable",
+      player: topBatter?.player || "-",
+      signal: "Source: innings summary totals",
+      size: "base",
+    },
+    {
+      key: "batting_peak",
+      label: "SIGNIFICANT MOMENT",
+      marker: topBatter ? `${topBatter.balls || "-"} BALLS` : "BATTER PEAK",
+      event: topBatter ? `${topBatter.player} scored ${topBatter.runs} (${topBatter.balls})` : "Top batting contribution unavailable",
+      impact: topBatter ? `Boundary pressure: ${topBatter.fours || 0} fours, ${topBatter.sixes || 0} sixes` : "Boundary impact unavailable",
+      player: topBatter?.player || "-",
+      signal: "Source: innings batting scorecard",
+      size: "major",
+    },
+    {
+      key: "bowling_peak",
+      label: "TURNING POINT",
+      marker: topBowler ? `${topBowler.overs || "-"} OVERS` : "BOWLING SPELL",
+      event: topBowler ? `${topBowler.player} took ${topBowler.wickets} wickets` : "Top bowling spell unavailable",
+      impact: pressureGap ? `Run pressure swing: ${pressureGap} runs` : "Pressure swing unavailable",
+      player: topBowler?.player || turningPlayer,
+      signal: lowEvidence ? "LIMITED EVIDENCE · partial scorecard support" : "Source: bowling spell + innings pressure",
+      size: "major",
+    },
+    {
+      key: "result",
+      label: "RESULT",
+      marker: "FULL TIME",
+      event: resultLine,
+      impact: outcome.player_of_match ? `Player of match: ${outcome.player_of_match}` : "Player of match unavailable",
+      player: outcome.player_of_match || turningPlayer,
+      signal: "Source: official result metadata",
+      size: "major",
+    },
+  ];
+
+  const keyMoment = moments.find((moment) => moment.key === "bowling_peak") || moments[0];
+
+  const renderMoment = (moment) => `
+    <article class='match-moment-object ${moment.size === "major" ? "major" : ""}'>
+      <p class='eyebrow'>${moment.label}</p>
+      <p class='moment-over'>${escapeHtml(moment.marker)}</p>
+      <p><strong>${escapeHtml(moment.event)}</strong></p>
+      <p class='muted'>Player: ${escapeHtml(moment.player)}</p>
+      <p>Impact: ${escapeHtml(moment.impact)}</p>
+      <p class='muted'>MatchGenome signal: ${escapeHtml(moment.signal)}</p>
+      <div class='row-actions'>
+        <button type='button' class='quick-link moment-replay-link'>Replay this moment</button>
+        <button type='button' class='quick-link moment-ask-link'>Ask about this moment</button>
+        ${moment.player && moment.player !== "-" ? `<button type='button' class='quick-link moment-player-link' data-player='${encodeURIComponent(moment.player)}'>Open player genome</button>` : ""}
+      </div>
+    </article>
+  `;
+
   const renderRows = (rows, columns) => {
     if (!rows.length) return "<p class='muted'>No rows available.</p>";
     return `<div class='table-wrap'><table class='mini-table'><thead><tr>${columns.map((c) => `<th>${c.label}</th>`).join("")}</tr></thead><tbody>${rows
       .map((row) => `<tr>${columns.map((c) => `<td>${metricDisplay(row[c.key])}</td>`).join("")}</tr>`)
       .join("")}</tbody></table></div>`;
   };
+  const teamsLine = `${teamLabel(meta.team_a_display, "Team A")} vs ${teamLabel(meta.team_b_display, "Team B")}`;
   els.fixtureDetail.innerHTML = `
-    <p class='eyebrow'>MATCH EVENT</p>
-    <h4>${teamLabel(meta.team_a_display, "Team A")} vs ${teamLabel(meta.team_b_display, "Team B")}</h4>
-    <p class='muted'>IPL ${match.season_id} · Match ${meta.match_number || "-"} · ${meta.match_date || "Date unknown"}</p>
-    <p>${meta.venue || "Venue unknown"}${meta.city ? `, ${meta.city}` : ""}</p>
-    ${askContext}
-    <div class='event-rail'>
-      <p><span>Toss</span><strong>${teamLabel(toss.winner, "Unknown")} ${toss.decision ? `(${toss.decision})` : ""}</strong></p>
-      <p><span>Pressure</span><strong>${outcome.result_margin ? String(outcome.result_margin) : "Pending"}</strong></p>
-      <p><span>Outcome</span><strong>${teamLabel(outcome.winner, "Pending")}</strong></p>
-    </div>
-    <div class='fixture-detail-grid'>
-      <div class='panel-block'>
-        <h5>Match narrative</h5>
-        <p>Toss: ${teamLabel(toss.winner, "Unknown")} (${toss.decision || "-"})</p>
-        <p>Result: ${teamLabel(outcome.winner, "Pending")} ${outcome.result_margin ? `by ${outcome.result_margin} ${outcome.result_type || ""}` : ""}</p>
-        <p>Player of match: ${outcome.player_of_match || "-"}</p>
-        <ul>${inningsRows || "<li>No innings data found.</li>"}</ul>
+    <p class='eyebrow'>THE MATCH UNFOLDS</p>
+    <section class='match-detail-hero'>
+      <h4>${teamsLine}</h4>
+      <p class='match-stage'>${escapeHtml(stage)}</p>
+      <p class='match-result-line'>${escapeHtml(resultLine.toUpperCase())}</p>
+      <p class='muted'>${meta.match_date || "Date unknown"} · ${meta.venue || "Venue unknown"}${meta.city ? `, ${meta.city}` : ""}</p>
+      <p class='muted'>IPL ${match.season_id} / Match ${meta.match_number || "-"}</p>
+      ${askContext}
+    </section>
+
+    <section class='match-key-moment'>
+      <p class='eyebrow'>KEY MOMENT</p>
+      ${renderMoment(keyMoment)}
+    </section>
+
+    <section class='match-phase-timeline'>
+      <p class='eyebrow'>SIGNIFICANT MOMENTS</p>
+      <div class='match-phase-line'>
+        ${moments
+          .map((moment, index) => `<button type='button' class='match-phase-node ${keyMoment.key === moment.key || (index === 0 && !keyMoment.key) ? "active" : ""} ${moment.size === "major" ? "major" : ""}' data-phase='${moment.key}'>${moment.label}</button>`)
+          .join("<span class='phase-divider' aria-hidden='true'></span>")}
       </div>
-      <div class='panel-block'>
-        <h5>Evidence layers</h5>
-        ${inningsScorecard.length
-          ? inningsScorecard
-              .map(
-                (item) => `
-            <details class='detail-drawer' ${Number(item.innings) === 1 ? "open" : ""}>
-              <summary>Innings ${item.innings} · ${teamLabel(item.batting_team, "Team")} ${item.score?.runs || 0}/${item.score?.wickets || 0} (${item.score?.overs || "0.0"} ov)</summary>
-              <p class='muted'>${teamLabel(item.batting_team, "Team A")} batting vs ${teamLabel(item.bowling_team, "Team B")} bowling</p>
-              <h6>Batting</h6>
-              ${renderRows(item.batting || [], [
-                { key: "player", label: "Player" },
-                { key: "runs", label: "R" },
-                { key: "balls", label: "B" },
-                { key: "fours", label: "4s" },
-                { key: "sixes", label: "6s" },
-                { key: "strike_rate", label: "SR" },
-                { key: "status", label: "Status" },
-              ])}
-              <h6>Bowling</h6>
-              ${renderRows(item.bowling || [], [
-                { key: "player", label: "Bowler" },
-                { key: "overs", label: "Overs" },
-                { key: "runs_conceded", label: "Runs" },
-                { key: "wickets", label: "Wkts" },
-                { key: "dot_balls", label: "Dots" },
-                { key: "economy", label: "Econ" },
-              ])}
-            </details>`,
-              )
-              .join("")
-          : "<p class='muted'>Scorecard is not available for this match.</p>"}
-      </div>
-    </div>
+      <div id='matchMomentStage' class='match-moment-stage'>${renderMoment(keyMoment)}</div>
+    </section>
+
+    <section class='match-intelligence-note'>
+      <p class='eyebrow'>WHY DID THIS MATTER?</p>
+      <p>${lowEvidence ? "LIMITED EVIDENCE" : "STRONG SIGNAL"} · This sequence is built from verified toss/result metadata and innings scorecard evidence, not inferred ball-by-ball events.</p>
+      <p class='muted'>Toss: ${teamLabel(toss.winner, "Unknown")} ${toss.decision ? `(${toss.decision})` : ""} · Player of match: ${outcome.player_of_match || "Unavailable"}</p>
+    </section>
+
+    <details class='detail-drawer'>
+      <summary>Open innings evidence</summary>
+      ${inningsScorecard.length
+        ? inningsScorecard
+            .map(
+              (item) => `
+          <details class='detail-drawer' ${Number(item.innings) === 1 ? "open" : ""}>
+            <summary>Innings ${item.innings} · ${teamLabel(item.batting_team, "Team")} ${item.score?.runs || 0}/${item.score?.wickets || 0} (${item.score?.overs || "0.0"} ov)</summary>
+            <p class='muted'>${teamLabel(item.batting_team, "Team A")} batting vs ${teamLabel(item.bowling_team, "Team B")} bowling</p>
+            <h6>Batting</h6>
+            ${renderRows(item.batting || [], [
+              { key: "player", label: "Player" },
+              { key: "runs", label: "R" },
+              { key: "balls", label: "B" },
+              { key: "fours", label: "4s" },
+              { key: "sixes", label: "6s" },
+              { key: "strike_rate", label: "SR" },
+              { key: "status", label: "Status" },
+            ])}
+            <h6>Bowling</h6>
+            ${renderRows(item.bowling || [], [
+              { key: "player", label: "Bowler" },
+              { key: "overs", label: "Overs" },
+              { key: "runs_conceded", label: "Runs" },
+              { key: "wickets", label: "Wkts" },
+              { key: "dot_balls", label: "Dots" },
+              { key: "economy", label: "Econ" },
+            ])}
+          </details>`,
+            )
+            .join("")
+        : "<p class='muted'>Scorecard is not available for this match.</p>"}
+    </details>
+
     <div class='row-actions'>
-      <button type='button' class='primary' id='openFixtureInTimeMachineBtn'>Open in Time Machine</button>
-      <button type='button' id='openFixtureStatsBtn'>Season Stats</button>
-      <button type='button' id='openFixtureAskBtn'>Ask about this match</button>
+      <button type='button' class='primary' id='openFixtureInTimeMachineBtn'>Enter replay</button>
+      <button type='button' id='openFixtureStatsBtn'>Explore season</button>
+      <button type='button' id='openFixtureAskBtn'>Ask about this moment</button>
     </div>
   `;
+
+  const phaseByKey = Object.fromEntries(moments.map((moment) => [moment.key, moment]));
+  const stageNode = document.getElementById("matchMomentStage");
+  els.fixtureDetail.querySelectorAll(".match-phase-node").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.getAttribute("data-phase") || "";
+      const phase = phaseByKey[key];
+      if (!phase || !stageNode) return;
+      els.fixtureDetail.querySelectorAll(".match-phase-node").forEach((node) => node.classList.remove("active"));
+      button.classList.add("active");
+      stageNode.innerHTML = renderMoment(phase);
+      bindMomentActions(phase);
+    });
+  });
+
+  function bindMomentActions(phase) {
+    const replayNodes = els.fixtureDetail.querySelectorAll(".moment-replay-link");
+    replayNodes.forEach((node) => {
+      node.addEventListener("click", () => {
+        setRoute({ view: "replay", season_id: match.season_id, match_id: matchId, origin: "matches" });
+      });
+    });
+    const askNodes = els.fixtureDetail.querySelectorAll(".moment-ask-link");
+    askNodes.forEach((node) => {
+      node.addEventListener("click", () => {
+        els.askInput.value = `Why did ${phase.label.toLowerCase()} matter in IPL ${match.season_id} match ${meta.match_number || matchId}?`;
+        setRoute({ view: "ask" });
+      });
+    });
+    const playerNodes = els.fixtureDetail.querySelectorAll(".moment-player-link");
+    playerNodes.forEach((node) => {
+      node.addEventListener("click", () => {
+        const player = decodeURIComponent(node.getAttribute("data-player") || "");
+        if (!player) return;
+        setRoute({ view: "player", player, origin: "matches", question: `${teamsLine} ${phase.label}` });
+      });
+    });
+  }
+
+  bindMomentActions(keyMoment);
   const btn = document.getElementById("openFixtureInTimeMachineBtn");
   const statsBtn = document.getElementById("openFixtureStatsBtn");
   const askBtn = document.getElementById("openFixtureAskBtn");
@@ -681,15 +884,10 @@ async function loadTeamDetails() {
     <div class='event-rail'>
       <p><span>Captain</span><strong>${leader.captain}</strong></p>
       <p><span>Coach</span><strong>${leader.coach}</strong></p>
+      <p><span>Owner</span><strong>${leader.owner}</strong></p>
       <p><span>Source</span><strong>${sourceLabel}</strong></p>
     </div>
     <div class='season-trail'>${seasonTrail}</div>
-    <div class='stats-grid'>
-      <div><span>Leadership</span><strong>Captain: ${leader.captain}</strong></div>
-      <div><span>Coaching</span><strong>${leader.coach}</strong></div>
-      <div><span>Ownership</span><strong>${leader.owner}</strong></div>
-      <div><span>Source</span><strong>${sourceLabel}</strong></div>
-    </div>
     <p class='muted'>${trustNote}</p>
     <h4>Squad signals</h4>
     <div class='entity-row'>
@@ -754,14 +952,8 @@ async function loadStatsWorkspace() {
 
   els.statsOverviewBlock.innerHTML = `
     <p class='eyebrow'>SEASON ${season}</p>
-    <h4>Pattern overview</h4>
+    <h4>What should you notice?</h4>
     <p class='muted'>${trustLabel}. ${trust.trust_statement || ""}</p>
-    <div class='event-rail'>
-      <p><span>Matches</span><strong>${metricDisplay(overview.matches)}</strong></p>
-      <p><span>Runs</span><strong>${metricDisplay(overview.runs)}</strong></p>
-      <p><span>Wickets</span><strong>${metricDisplay(overview.wickets)}</strong></p>
-      <p><span>Dot ball %</span><strong>${metricDisplay(overview.dot_ball_percentage)}%</strong></p>
-    </div>
     <div class='stats-grid'>
       <div><span>Matches</span><strong>${metricDisplay(overview.matches)}</strong></div>
       <div><span>Innings</span><strong>${metricDisplay(overview.innings)}</strong></div>
@@ -820,27 +1012,76 @@ async function loadStatsWorkspace() {
   `;
 }
 
-async function loadHomeLaunchpad() {
-  const season = Number(els.statsSeasonSelect.value || 0);
-  const [fixturesPayload, resultsPayload, topPayload, tablePayload, overviewPayload] = await Promise.all([
-    api.get(`/api/fixtures?season_id=${season}`),
-    api.get(`/api/results?season_id=${season}`),
-    api.get(`/api/stats/top-performers?season_id=${season}&limit=1`),
-    api.get(`/api/stats/points-table?season_id=${season}`),
-    api.get(`/api/stats/overview?season_id=${season}`),
+async function compareSeasonSignals() {
+  if (!els.statsCompareSeasonA || !els.statsCompareSeasonB || !els.statsCompareBlock) return;
+  const seasonA = normalizeSeason(els.statsCompareSeasonA.value);
+  const seasonB = normalizeSeason(els.statsCompareSeasonB.value);
+  if (!seasonA || !seasonB) {
+    els.statsCompareBlock.textContent = "Choose two seasons to compare their signals.";
+    return;
+  }
+  const [a, b] = await Promise.all([
+    api.get(`/api/stats/overview?season_id=${seasonA}`),
+    api.get(`/api/stats/overview?season_id=${seasonB}`),
   ]);
+  const rows = [
+    ["Runs", Number(a.runs || 0), Number(b.runs || 0)],
+    ["Wickets", Number(a.wickets || 0), Number(b.wickets || 0)],
+    ["Boundaries", Number(a.fours || 0) + Number(a.sixes || 0), Number(b.fours || 0) + Number(b.sixes || 0)],
+    ["Strike Rate", Number(a.average_strike_rate || 0), Number(b.average_strike_rate || 0)],
+    ["Dot Ball %", Number(a.dot_ball_percentage || 0), Number(b.dot_ball_percentage || 0)],
+  ];
+  els.statsCompareBlock.innerHTML = `
+    <p class='eyebrow'>COMPARE SEASONS</p>
+    <h4>${seasonA} vs ${seasonB}</h4>
+    <div class='table-wrap'>
+      <table class='mini-table'>
+        <thead><tr><th>Signal</th><th>${seasonA}</th><th>${seasonB}</th><th>Shift</th></tr></thead>
+        <tbody>
+          ${rows
+            .map(([label, va, vb]) => {
+              const delta = Number(vb) - Number(va);
+              const sign = delta > 0 ? "+" : "";
+              return `<tr><td>${label}</td><td>${metricDisplay(va)}</td><td>${metricDisplay(vb)}</td><td>${sign}${delta.toFixed(2)}</td></tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function loadHomeLaunchpad(selectedSeason = null) {
+  const latestSeason = normalizeSeason(state.latestSeasonId || latestSeasonFromState());
+  const season = normalizeSeason(selectedSeason || state.homeSelectedSeason || latestSeason);
+  if (!season) return;
+  state.homeSelectedSeason = season;
+  state.latestSeasonId = latestSeason || season;
+
+  // Read sequentially to avoid sqlite concurrency misuse surfaced by parallel API fan-out.
+  const fixturesPayload = await api.get(`/api/fixtures?season_id=${season}`);
+  const resultsPayload = await api.get(`/api/results?season_id=${season}`);
+  const topPayload = await api.get(`/api/stats/top-performers?season_id=${season}&limit=1`);
+  const tablePayload = await api.get(`/api/stats/points-table?season_id=${season}`);
+  const overviewPayload = await api.get(`/api/stats/overview?season_id=${season}`);
+  const boardPayload = await api.get(`/api/stats/leaderboards?season_id=${season}&limit=1`);
 
   const fixtures = fixturesPayload.fixtures || [];
   const upcoming = fixtures.find((row) => row.status === "upcoming" || row.status === "scheduled") || fixtures[0];
-  const latest = (resultsPayload.results || []).slice(-1)[0];
-  const leader = (tablePayload.table || [])[0];
+  const latest = (resultsPayload.results || []).slice(-1)[0] || null;
+  const leader = (tablePayload.table || [])[0] || null;
   const topRun = (((topPayload.top_performers || {}).runs || [])[0]) || null;
   const topWicket = (((topPayload.top_performers || {}).wickets || [])[0]) || null;
+  const highestScore = (((boardPayload.leaderboards || {}).highest_score || [])[0]) || null;
   const coverage = overviewPayload.coverage || {};
   const trust = coverage.trust_dimensions || {};
   const trustBadge = humanTrustLabel(trust.overall_trust);
   const totalSeasons = state.seasons.length || 0;
+  const viewingHistorical = latestSeason && season !== latestSeason;
 
+  if (els.homeContextPill) {
+    els.homeContextPill.textContent = viewingHistorical ? `VIEWING ${season}` : "LATEST CHAPTER";
+  }
   if (els.homeSeasonTag) {
     els.homeSeasonTag.textContent = String(season || "-");
   }
@@ -863,9 +1104,10 @@ async function loadHomeLaunchpad() {
   }
 
   if (els.homeUpcoming) {
-    els.homeUpcoming.textContent = upcoming
-      ? `Upcoming: ${teamLabel(upcoming.team_a, "Team A")} vs ${teamLabel(upcoming.team_b, "Team B")} · ${upcoming.match_date || "Date unavailable"}`
+    const summary = upcoming
+      ? `${teamLabel(upcoming.team_a, "Team A")} vs ${teamLabel(upcoming.team_b, "Team B")} · ${upcoming.match_date || "Date unavailable"}`
       : "Verified information is not currently available.";
+    els.homeUpcoming.textContent = viewingHistorical ? `Historical chapter signal: ${summary}` : `Next chapter signal: ${summary}`;
   }
   if (els.homeLatest) {
     els.homeLatest.textContent = latest
@@ -874,7 +1116,7 @@ async function loadHomeLaunchpad() {
   }
   if (els.homeSeasonStatus) {
     els.homeSeasonStatus.textContent = leader
-      ? `Table context: ${leader.team} lead with ${leader.points} points (NRR ${leader.net_run_rate})`
+      ? `Champion signal: ${leader.team} · ${leader.points} points (NRR ${leader.net_run_rate})`
       : "Verified information is not currently available.";
   }
 
@@ -882,8 +1124,65 @@ async function loadHomeLaunchpad() {
     els.homeTopPerformers.innerHTML = `
       <p class='context-stat'><strong>${topRun ? metricDisplay(topRun.value) : "-"}</strong><span>runs · ${escapeHtml(topRun?.player || "Not available")}</span></p>
       <p class='context-stat'><strong>${topWicket ? metricDisplay(topWicket.value) : "-"}</strong><span>wickets · ${escapeHtml(topWicket?.player || "Not available")}</span></p>
-      <p class='context-stat'><strong>${escapeHtml(leader?.team || "Not available")}</strong><span>champion trajectory / table lead</span></p>
+      <p class='context-stat'><strong>${highestScore ? metricDisplay(highestScore.value) : "-"}</strong><span>highest score · ${escapeHtml(highestScore?.player || "Not available")}</span></p>
     `;
+  }
+
+  if (els.homeSeasonTimeline) {
+    const seasons = [...state.seasons]
+      .map((s) => normalizeSeason(s.season_id))
+      .filter(Boolean)
+      .sort((a, b) => a - b);
+    els.homeSeasonTimeline.innerHTML = seasons
+      .map((seasonId) => {
+        const active = Number(seasonId) === Number(season) ? "active" : "";
+        return `<button type='button' class='home-season-node ${active}' data-season='${seasonId}'>${seasonId}</button>`;
+      })
+      .join("");
+    els.homeSeasonTimeline.querySelectorAll(".home-season-node").forEach((button) => {
+      button.addEventListener("click", () => {
+        const seasonId = normalizeSeason(button.getAttribute("data-season"));
+        if (!seasonId) return;
+        state.homeSelectedSeason = seasonId;
+        if (els.homeReplaySeasonSelect) {
+          els.homeReplaySeasonSelect.value = String(seasonId);
+        }
+        loadHomeLaunchpad(seasonId).catch((err) => setStatus(err.message || "Failed to refresh home chapter", "error"));
+      });
+    });
+  }
+
+  if (els.homeSeasonStory) {
+    const keyMoment = latest
+      ? `${teamLabel(latest.team_a, "Team A")} vs ${teamLabel(latest.team_b, "Team B")} · ${teamLabel(latest.winner, "Result pending")}`
+      : "No completed moment available";
+    els.homeSeasonStory.innerHTML = `
+      <p class='eyebrow'>SEASON STORY</p>
+      <h4>IPL ${season}</h4>
+      <div class='season-story-grid'>
+        <div><span>Champion</span><strong>${escapeHtml(leader?.team || "Unknown")}</strong></div>
+        <div><span>Top performer</span><strong>${escapeHtml(topRun?.player || topWicket?.player || "Unknown")}</strong></div>
+        <div><span>Key number</span><strong>${topRun ? metricDisplay(topRun.value) : topWicket ? metricDisplay(topWicket.value) : "-"}</strong></div>
+        <div><span>Signature moment</span><strong>${escapeHtml(keyMoment)}</strong></div>
+      </div>
+      <div class='row-actions'>
+        <button type='button' class='quick-link' id='homeExploreSeasonBtn'>Explore season</button>
+        <button type='button' class='quick-link' id='homeOpenSeasonReplayBtn'>Enter replay</button>
+        <button type='button' class='quick-link' id='homeOpenSeasonPlayerBtn'>Open player genome</button>
+      </div>
+    `;
+    const exploreBtn = document.getElementById("homeExploreSeasonBtn");
+    const replayBtn = document.getElementById("homeOpenSeasonReplayBtn");
+    const playerBtn = document.getElementById("homeOpenSeasonPlayerBtn");
+    if (exploreBtn) {
+      exploreBtn.addEventListener("click", () => setRoute({ view: "matches", season_id: season, tab: "results" }));
+    }
+    if (replayBtn) {
+      replayBtn.addEventListener("click", () => setRoute({ view: "replay", season_id: season }));
+    }
+    if (playerBtn) {
+      playerBtn.addEventListener("click", () => setRoute({ view: "player" }));
+    }
   }
 
   if (els.homeDataStatement) {
@@ -1001,6 +1300,8 @@ async function loadHomeLaunchpad() {
       if (btn) btn.addEventListener("click", () => setRoute(route));
     });
   }
+
+  updateContextBreadcrumb();
 }
 
 function setReplayTab(tab) {
@@ -1013,7 +1314,40 @@ function setReplayTab(tab) {
   tabs.forEach(([btn, panel, active]) => {
     btn.classList.toggle("active", active);
     panel.hidden = !active;
+    btn.setAttribute("aria-selected", active ? "true" : "false");
   });
+}
+
+function bindReplayTabTarget(button, tab) {
+  if (!button) return;
+  let lastTapAt = 0;
+  const activate = (event) => {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    setReplayTab(tab);
+  };
+  button.addEventListener("pointerup", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    lastTapAt = Date.now();
+    activate(event);
+  });
+  button.addEventListener("click", (event) => {
+    if (Date.now() - lastTapAt < 300) return;
+    activate(event);
+  });
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    activate(event);
+  });
+}
+
+function updateReplayLayoutState() {
+  const layout = els.timeMachineView ? els.timeMachineView.querySelector(".time-machine-layout") : null;
+  if (!layout) return;
+  const active = Boolean(state.sessionId) && !els.replayPanel.hidden;
+  layout.classList.toggle("stage-active", active);
 }
 
 async function selectMatchInTimeMachine(seasonId, matchId) {
@@ -1057,6 +1391,99 @@ function setUiState(nextState) {
   els.predictBtn.disabled = !canPredict;
   els.nextBtn.disabled = !canPredict;
   els.revealBtn.disabled = nextState !== UiState.PREDICTION_AVAILABLE;
+
+  const dominantMap = {
+    predict: canPredict,
+    reveal: nextState === UiState.PREDICTION_AVAILABLE,
+    next: nextState === UiState.PREDICTION_REVEALED,
+  };
+  [
+    [els.predictBtn, dominantMap.predict],
+    [els.revealBtn, dominantMap.reveal],
+    [els.nextBtn, dominantMap.next],
+  ].forEach(([button, active]) => {
+    if (!button) return;
+    button.classList.toggle("dominant", Boolean(active));
+  });
+}
+
+function replayEvidenceStrength(prediction) {
+  const reliability = String(prediction?.reliability || "unknown").toLowerCase();
+  const sample = Number(prediction?.evidence_sample_size || 0);
+  const evidence = prediction?.evidence || {};
+  const matchup = Number(evidence.matchup_deliveries || 0);
+  const comparable = Number(evidence.comparable_deliveries || 0);
+  if (sample < 40 || matchup === 0 || comparable === 0 || reliability === "low") {
+    return {
+      label: "LIMITED EVIDENCE",
+      note: `Direct matchup ${matchup} · Similar situations ${comparable}`,
+    };
+  }
+  if (sample < 120 || reliability === "medium") {
+    return {
+      label: "MODERATE SIGNAL",
+      note: `Direct matchup ${matchup} · Similar situations ${comparable}`,
+    };
+  }
+  return {
+    label: "STRONG SIGNAL",
+    note: `Direct matchup ${matchup} · Similar situations ${comparable}`,
+  };
+}
+
+function buildUserCallOptions() {
+  if (!els.userCallOptions) return;
+  const outcomes = ["0", "1", "2", "4", "6", "wicket"];
+  els.userCallOptions.innerHTML = outcomes
+    .map((outcome) => {
+      const active = state.userCall === outcome ? "active" : "";
+      const label = outcome === "wicket" ? "W" : outcome;
+      return `<button type='button' class='user-call-option ${active}' data-call='${outcome}'>${label}</button>`;
+    })
+    .join("");
+  els.userCallOptions.querySelectorAll(".user-call-option").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.userCall = button.getAttribute("data-call") || null;
+      buildUserCallOptions();
+      if (els.userCallSummary) {
+        els.userCallSummary.textContent = state.userCall ? `Your call: ${outcomeDisplay(state.userCall)}` : "Choose your call before reveal.";
+      }
+    });
+  });
+}
+
+function renderPredictionLedger() {
+  if (!els.predictionLedger) return;
+  const revealed = state.timeline.filter((entry) => entry.status !== "pending");
+  if (!revealed.length) {
+    els.predictionLedger.innerHTML = "Prediction ledger appears after the first reveal.";
+    return;
+  }
+  const youCorrect = revealed.filter((entry) => entry.user_call && entry.user_call === entry.actual).length;
+  const modelCorrect = revealed.filter((entry) => entry.status === "correct").length;
+  els.predictionLedger.innerHTML = `
+    <p class='eyebrow'>PREDICTION LEDGER</p>
+    <div class='ledger-stream'>
+      ${revealed
+        .slice(-10)
+        .map((entry) => {
+          const userOutcome = entry.user_call ? outcomeDisplay(entry.user_call) : "-";
+          const verdict = entry.status === "correct" ? "MODEL CORRECT" : "MODEL MISSED";
+          return `<article class='ledger-row'>
+            <p><span>Ball</span><strong>${entry.over}.${entry.ball}</strong></p>
+            <p><span>Your call</span><strong>${userOutcome}</strong></p>
+            <p><span>MatchGenome</span><strong>${outcomeDisplay(entry.predicted)}</strong></p>
+            <p><span>Reality</span><strong>${outcomeDisplay(entry.actual)}</strong></p>
+            <p><span>Result</span><strong>${verdict}</strong></p>
+          </article>`;
+        })
+        .join("")}
+    </div>
+    <div class='ask-meta-row'>
+      <span class='trust-chip'>Your accuracy ${youCorrect}/${revealed.length}</span>
+      <span class='trust-chip'>Model accuracy ${modelCorrect}/${revealed.length}</span>
+    </div>
+  `;
 }
 
 function option(label, value) {
@@ -1159,6 +1586,7 @@ async function selectTimeMachineMatch(match) {
   }
   renderMatchCards();
   await loadInnings();
+  updateContextBreadcrumb();
 }
 
 async function jumpToReplayWidgets(match) {
@@ -1222,10 +1650,16 @@ function renderMatchCards() {
     `;
     const selectBtn = card.querySelector(".match-card-select");
     const replayBtn = card.querySelector(".replay-chip");
+    const selectCard = () => {
+      selectTimeMachineMatch(m).catch((err) => setStatus(err.message || "Failed to select match", "error"));
+    };
+    card.addEventListener("click", (event) => {
+      const target = event.target;
+      if (target && typeof target.closest === "function" && target.closest(".replay-chip")) return;
+      selectCard();
+    });
     if (selectBtn) {
-      selectBtn.addEventListener("click", () => {
-        selectTimeMachineMatch(m).catch((err) => setStatus(err.message || "Failed to select match", "error"));
-      });
+      selectBtn.addEventListener("click", selectCard);
     }
     if (replayBtn) {
       replayBtn.addEventListener("click", (event) => {
@@ -1278,6 +1712,7 @@ function updateTimeline() {
 
   els.previousBtn.disabled = revealed === 0;
   renderBallByBallRows();
+  renderPredictionLedger();
 }
 
 function renderBallByBallRows() {
@@ -1336,9 +1771,8 @@ function renderPrediction(pred) {
   els.probabilityBars.innerHTML = entries
     .map(([label, value]) => {
       const topClass = label === top ? "top" : "";
-      return `<div class='prob-row ${topClass}'>
-        <span>${outcomeDisplay(label)}</span>
-        <div class='bar'><span style='width:${Math.max(2, Math.round(Number(value) * 100))}%'></span></div>
+      return `<div class='prob-node ${topClass}'>
+        <span>${label === "wicket" ? "W" : escapeHtml(label)}</span>
         <strong>${toPct(value)}</strong>
       </div>`;
     })
@@ -1350,13 +1784,15 @@ function renderPrediction(pred) {
   const comparable = Number(evidence.comparable_deliveries || 0);
   const matchup = Number(evidence.matchup_deliveries || 0);
   const reliability = capitalize(pred.prediction.reliability || "unknown");
+  const strength = replayEvidenceStrength(pred.prediction);
 
   els.whyBlock.innerHTML = `
-    <h5>Why did MatchGenome predict ${outcomeDisplay(top)}?</h5>
-    <p>Prediction combines batter history, bowler history, matchup context, innings pressure, and similar historical states available before this ball.</p>
-    <p><strong>Evidence:</strong> ${comparable} comparable deliveries · ${matchup} direct matchup deliveries</p>
+    <h5>Why this forecast?</h5>
+    <p><span class='trust-chip'>${strength.label}</span></p>
+    <p>MatchGenome weighs matchup, phase pressure, recent context, and similar pre-ball situations.</p>
+    <p><strong>Evidence strength:</strong> ${strength.note}</p>
     <p><strong>Reliability:</strong> ${reliability}</p>
-    ${lookedAt ? `<details><summary>What did it look at?</summary><ul>${lookedAt}</ul></details>` : ""}
+    ${lookedAt ? `<details><summary>Context factors</summary><ul>${lookedAt}</ul></details>` : ""}
   `;
 
   const change = pred.prediction.prediction_difference;
@@ -1388,9 +1824,9 @@ function renderPrediction(pred) {
     .join("")}`;
 
   els.technicalEvidenceBlock.innerHTML = `
-    <p><strong>Model version:</strong> ${pred.prediction.model_version || "-"}</p>
-    <p><strong>Chosen evidence level:</strong> ${pred.prediction.chosen_evidence_level || "-"}</p>
-    <p><strong>Raw probability vector:</strong> ${JSON.stringify(probs)}</p>
+    <p><strong>Evidence profile:</strong> ${pred.prediction.chosen_evidence_level || "-"}</p>
+    <p><strong>Historical comparison:</strong> ${comparable} similar situations · ${matchup} direct matchup situations.</p>
+    <p><strong>Interpretation:</strong> Forecast uses only pre-ball historical evidence for this context.</p>
   `;
 }
 
@@ -1430,21 +1866,35 @@ function renderState(pred) {
   }
 
   renderReplayHeaderMetrics();
+  updateContextBreadcrumb();
 }
 
 function renderReveal(reveal) {
   const actual = reveal.actual.actual_outcome;
   const predicted = reveal.comparison.predicted_top_outcome;
   const isCorrect = Boolean(reveal.comparison.is_correct);
-  const verdict = isCorrect ? "Correct" : "Incorrect";
+  const verdict = isCorrect ? "MATCHGENOME CORRECT" : "MATCHGENOME MISSED";
+  const prediction = state.lastPrediction?.prediction || null;
+  const strength = replayEvidenceStrength(prediction || {});
 
   els.actualBlock.className = `actual-block ${isCorrect ? "correct" : "incorrect"}`;
   els.actualBlock.innerHTML = `
-    <h5>The Ball Happened</h5>
-    <p><strong>${outcomeDisplay(actual).toUpperCase()}</strong></p>
-    <p>MatchGenome predicted <strong>${outcomeDisplay(predicted)}</strong>.</p>
-    <p><strong>${verdict}</strong></p>
-    <p>Total runs: ${reveal.actual.delivery_facts.total_runs} · Wicket: ${reveal.actual.delivery_facts.is_wicket === 1 ? "Yes" : "No"}</p>
+    <p class='eyebrow'>WHAT ACTUALLY HAPPENED</p>
+    <p class='reveal-outcome'><strong>${outcomeDisplay(actual).toUpperCase()}</strong></p>
+    <p>${verdict}</p>
+    <p>Forecast: ${outcomeDisplay(predicted)} · Reality: ${outcomeDisplay(actual)}</p>
+    <p class='muted'>Total runs ${reveal.actual.delivery_facts.total_runs} · Wicket ${reveal.actual.delivery_facts.is_wicket === 1 ? "Yes" : "No"}</p>
+  `;
+
+  const difference = predicted === actual
+    ? "Historical context aligned with match reality at this point."
+    : "This ball diverged from the strongest historical pattern in this context.";
+  els.changeBlock.classList.remove("muted");
+  els.changeBlock.innerHTML = `
+    <h5>What changed? What did MatchGenome identify?</h5>
+    <p>${difference}</p>
+    <p><span class='trust-chip'>${strength.label}</span> ${strength.note}</p>
+    <p class='muted'>Matchup · Phase · Pressure · Recent state all contributed to this interpretation.</p>
   `;
 }
 
@@ -2028,6 +2478,35 @@ async function searchPlayers() {
   });
 }
 
+async function loadPlayerDiscovery() {
+  if (!els.playerDiscovery) return;
+  const payload = await api.get("/api/players?limit=12");
+  const players = (payload.players || [])
+    .flatMap((item) => normalizePlayerNames(item.player_name).map((name) => ({ name, item })))
+    .filter((row) => isCleanPlayerName(row.name))
+    .slice(0, 8);
+  if (!players.length) {
+    els.playerDiscovery.innerHTML = "<p class='muted'>Player discovery is not available in this dataset slice.</p>";
+    return;
+  }
+  els.playerDiscovery.innerHTML = `
+    <p class='eyebrow'>PLAYER DISCOVERY</p>
+    <p class='muted'>Open a real player genome from verified local data.</p>
+    <div class='entity-row'>
+      ${players
+        .map((row) => `<button type='button' class='entity-chip discover-player' data-player='${encodeURIComponent(row.name)}'>${escapeHtml(row.name)}</button>`)
+        .join("")}
+    </div>
+  `;
+  els.playerDiscovery.querySelectorAll(".discover-player").forEach((button) => {
+    button.addEventListener("click", () => {
+      const player = decodeURIComponent(button.getAttribute("data-player") || "");
+      if (!player) return;
+      setRoute({ view: "player", player });
+    });
+  });
+}
+
 async function loadSeasons() {
   const payload = await api.get("/api/seasons");
   state.seasons = payload.seasons || [];
@@ -2090,8 +2569,10 @@ async function startReplay() {
   state.lastPrediction = null;
   state.timeline = [];
   state.selectedTimelineIndex = -1;
+  state.userCall = null;
 
   els.replayPanel.hidden = false;
+  updateReplayLayoutState();
   els.actualBlock.className = "actual-block";
   els.actualBlock.textContent = "Reveal the ball to see actual outcome.";
   els.predictedTop.textContent = "READY";
@@ -2102,6 +2583,7 @@ async function startReplay() {
   els.changeBlock.textContent = "Prediction change diagnostics will appear after the next ball.";
 
   setReplayTab("prediction");
+  buildUserCallOptions();
   setUiState(UiState.READY);
   renderReplayHeaderMetrics();
   updateTimeline();
@@ -2124,6 +2606,7 @@ async function predictNext() {
       ball: pred.delivery.ball_number,
       batter: pred.delivery.batter,
       bowler: pred.delivery.bowler,
+      user_call: state.userCall,
       predicted: pred.prediction.predicted_top_outcome,
       actual: null,
       status: "pending",
@@ -2170,6 +2653,9 @@ async function restartReplay() {
   state.timeline = [];
   state.lastPrediction = null;
   state.selectedTimelineIndex = -1;
+  state.userCall = null;
+  buildUserCallOptions();
+  updateReplayLayoutState();
 
   els.actualBlock.className = "actual-block";
   els.actualBlock.textContent = "Reveal the ball to see actual outcome.";
@@ -2199,6 +2685,7 @@ function syncRoute() {
     } else {
       els.playerPanel.hidden = true;
       els.playerPrompt.hidden = false;
+      els.playerPrompt.innerHTML = "<p class='eyebrow'>PLAYER DISCOVERY</p><p class='muted'>Choose a player from discovery or search to open a full genome profile.</p>";
     }
     return;
   }
@@ -2228,7 +2715,7 @@ function syncRoute() {
     if (route.matchId) {
       loadFixtureDetail(Number(route.matchId)).catch((err) => setStatus(err.message || "Failed to load match details", "error"));
     } else {
-      els.fixtureDetail.innerHTML = "Click a match card to inspect match details.";
+      els.fixtureDetail.innerHTML = "<p class='eyebrow'>MATCH NARRATIVE</p><p class='muted'>Pick a match from the event wall to inspect turning points, score narrative, and contextual actions.</p>";
     }
     loadFixtures().catch((err) => setStatus(err.message || "Failed to load fixtures", "error"));
     loadResults().catch((err) => setStatus(err.message || "Failed to load results", "error"));
@@ -2270,6 +2757,7 @@ function syncRoute() {
 
   if (route.view === "replay" || route.view === "time_machine") {
     setView("replay");
+    updateReplayLayoutState();
     selectMatchInTimeMachine(route.seasonId, route.matchId).catch((err) => setStatus(err.message || "Failed to load match", "error"));
     return;
   }
@@ -2280,7 +2768,13 @@ function syncRoute() {
   }
 
   setView("home");
-  loadHomeLaunchpad().catch((err) => setStatus(err.message || "Failed to load home context", "error"));
+  const requested = normalizeSeason(route.seasonId);
+  if (requested) {
+    state.homeSelectedSeason = requested;
+  } else {
+    state.homeSelectedSeason = state.latestSeasonId || latestSeasonFromState();
+  }
+  loadHomeLaunchpad(state.homeSelectedSeason).catch((err) => setStatus(err.message || "Failed to load home context", "error"));
 }
 
 function attachEvents() {
@@ -2318,6 +2812,14 @@ function attachEvents() {
     els.homeReplayBtn.addEventListener("click", () => {
       const season = Number(els.homeReplaySeasonSelect?.value || 0);
       setRoute({ view: "replay", season_id: season || "" });
+    });
+  }
+  if (els.homeReplaySeasonSelect) {
+    els.homeReplaySeasonSelect.addEventListener("change", () => {
+      const season = normalizeSeason(els.homeReplaySeasonSelect.value);
+      if (!season) return;
+      state.homeSelectedSeason = season;
+      loadHomeLaunchpad(season).catch((err) => setStatus(err.message || "Failed to switch chapter", "error"));
     });
   }
   if (els.predictToReplayBtn) {
@@ -2363,6 +2865,15 @@ function attachEvents() {
   els.teamSeasonSelect.addEventListener("change", () => loadTeamDetails().catch((err) => setStatus(err.message || "Failed to load team", "error")));
   els.statsRefreshBtn.addEventListener("click", () => loadStatsWorkspace().catch((err) => setStatus(err.message || "Failed to load stats", "error")));
   els.statsSeasonSelect.addEventListener("change", () => loadStatsWorkspace().catch((err) => setStatus(err.message || "Failed to load stats", "error")));
+  if (els.statsCompareBtn) {
+    els.statsCompareBtn.addEventListener("click", () => compareSeasonSignals().catch((err) => setStatus(err.message || "Failed to compare seasons", "error")));
+  }
+  if (els.statsCompareSeasonA) {
+    els.statsCompareSeasonA.addEventListener("change", () => compareSeasonSignals().catch((err) => setStatus(err.message || "Failed to compare seasons", "error")));
+  }
+  if (els.statsCompareSeasonB) {
+    els.statsCompareSeasonB.addEventListener("change", () => compareSeasonSignals().catch((err) => setStatus(err.message || "Failed to compare seasons", "error")));
+  }
   const statsTabs = [
     [els.statsTabOverviewBtn, "overview"],
     [els.statsTabBattingBtn, "batting"],
@@ -2430,9 +2941,9 @@ function attachEvents() {
   els.restartBtn.addEventListener("click", () => restartReplay().catch((err) => setStatus(err.message || "Restart failed.", "error")));
   els.previousBtn.addEventListener("click", () => setReplayTab("ball_by_ball"));
 
-  els.tabPredictionBtn.addEventListener("click", () => setReplayTab("prediction"));
-  els.tabBallByBallBtn.addEventListener("click", () => setReplayTab("ball_by_ball"));
-  els.tabEvidenceBtn.addEventListener("click", () => setReplayTab("evidence"));
+  bindReplayTabTarget(els.tabPredictionBtn, "prediction");
+  bindReplayTabTarget(els.tabBallByBallBtn, "ball_by_ball");
+  bindReplayTabTarget(els.tabEvidenceBtn, "evidence");
 
   els.backToReplayBtn.addEventListener("click", () => setRoute({ view: "replay" }));
   els.exploreReplayBtn.addEventListener("click", () => setRoute({ view: "replay" }));
@@ -2458,8 +2969,10 @@ function attachEvents() {
 
 async function bootstrap() {
   try {
-    setStatus("Loading IPL intelligence workspace...");
+    setStatus("Loading MatchGenome...");
     await loadSeasons();
+    state.latestSeasonId = latestSeasonFromState();
+    state.homeSelectedSeason = state.latestSeasonId;
     await loadMatches();
     await loadInnings();
     await loadTeams();
@@ -2468,14 +2981,34 @@ async function bootstrap() {
       node.innerHTML = "";
       state.seasons.forEach((s) => node.appendChild(option(`Season ${s.season_id}`, s.season_id)));
     });
+    if (state.latestSeasonId) {
+      [els.seasonSelect, els.fixturesSeasonSelect, els.statsSeasonSelect, els.teamSeasonSelect, els.homeReplaySeasonSelect].forEach((node) => {
+        if (node) node.value = String(state.latestSeasonId);
+      });
+    }
+    if (els.statsCompareSeasonA && els.statsCompareSeasonB) {
+      els.statsCompareSeasonA.innerHTML = "";
+      els.statsCompareSeasonB.innerHTML = "";
+      state.seasons.forEach((s) => {
+        els.statsCompareSeasonA.appendChild(option(`Season ${s.season_id}`, s.season_id));
+        els.statsCompareSeasonB.appendChild(option(`Season ${s.season_id}`, s.season_id));
+      });
+      const latest = state.latestSeasonId || normalizeSeason(els.statsSeasonSelect.value);
+      const prev = state.seasons.length > 1 ? normalizeSeason(state.seasons[state.seasons.length - 2].season_id) : latest;
+      if (latest) els.statsCompareSeasonB.value = String(latest);
+      if (prev) els.statsCompareSeasonA.value = String(prev);
+    }
+    await loadPlayerDiscovery();
     if (els.fixturesStatusSelect) {
       els.fixturesStatusSelect.value = "";
     }
     attachEvents();
+    buildUserCallOptions();
     setReplayTab("prediction");
     setPlayerTab("overview");
     setStatsTab("overview");
     setUiState(UiState.SELECT_MATCH);
+    await compareSeasonSignals();
     syncRoute();
     clearStatus();
   } catch (err) {
