@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import re
 import sqlite3
+import threading
 import time
 from typing import Any, Callable, cast
 from urllib.parse import parse_qs, unquote, urlparse
@@ -45,6 +46,10 @@ class TimeMachineHttpApp:
     def __init__(self, conn: sqlite3.Connection, static_dir: Path) -> None:
         self.api = TimeMachineAPI(TimeMachineService(conn))
         self.static_dir = static_dir
+        # A single sqlite3 connection is shared by ThreadingHTTPServer worker
+        # threads. Concurrent use of one connection raises
+        # "bad parameter or other API misuse", so request dispatch is serialized.
+        self.lock = threading.RLock()
 
 
 class TimeMachineRequestHandler(BaseHTTPRequestHandler):
@@ -59,6 +64,10 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:  # noqa: N802
+        with self._app().lock:
+            self._dispatch_get()
+
+    def _dispatch_get(self) -> None:
         started = time.perf_counter()
         status_code = HTTPStatus.OK
         try:
@@ -190,6 +199,10 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
             log_http("GET", self.path, int(status_code), started)
 
     def do_POST(self) -> None:  # noqa: N802
+        with self._app().lock:
+            self._dispatch_post()
+
+    def _dispatch_post(self) -> None:
         started = time.perf_counter()
         status_code = HTTPStatus.OK
         try:

@@ -4,7 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MatchGenomeIPL - IPL Intelligence Layer</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#070a0d" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap"
+    />
     <link rel="stylesheet" href="/styles.css" />
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("mg-theme");
+          var prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+          document.documentElement.setAttribute("data-theme", stored || (prefersLight ? "light" : "dark"));
+        } catch (err) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
   </head>
   <body class="theme-premium">
     <main class="app studio-shell" aria-live="polite">
@@ -29,6 +48,16 @@
           <button id="goPredictBtn" type="button">Predict</button>
           <button id="goReplayBtn" type="button">Replay</button>
           <button id="goAskBtn" type="button" class="ask-entry">Ask</button>
+          <button
+            id="themeToggleBtn"
+            type="button"
+            class="theme-toggle"
+            aria-pressed="false"
+            title="Switch between light and dark appearance"
+          >
+            <span class="theme-toggle-icon" aria-hidden="true"></span>
+            <span class="theme-toggle-label">Dark</span>
+          </button>
         </nav>
       </header>
 
@@ -498,6 +527,31 @@
     </main>
 
     <script src="/app.js" defer></script>
+    <script>
+      (function () {
+        var root = document.documentElement;
+        var btn = document.getElementById("themeToggleBtn");
+        if (!btn) return;
+        var label = btn.querySelector(".theme-toggle-label");
+        function paint() {
+          var mode = root.getAttribute("data-theme") === "light" ? "light" : "dark";
+          btn.setAttribute("aria-pressed", mode === "light" ? "true" : "false");
+          btn.setAttribute("aria-label", "Appearance: " + mode + ". Activate to switch theme.");
+          if (label) label.textContent = mode === "light" ? "Light" : "Dark";
+        }
+        btn.addEventListener("click", function () {
+          var next = root.getAttribute("data-theme") === "light" ? "dark" : "light";
+          root.setAttribute("data-theme", next);
+          try {
+            localStorage.setItem("mg-theme", next);
+          } catch (err) {
+            /* storage unavailable */
+          }
+          paint();
+        });
+        paint();
+      })();
+    </script>
   </body>
 </html>
 

@@ -310,10 +310,26 @@ function sanitizeUiError(message, fallback = "MatchGenome could not complete tha
     /internal_error/i,
     /invalid_request/i,
     /Request failed:/i,
+    /API misuse/i,
+    /bad parameter/i,
+    /sqlite/i,
+    /database is locked/i,
+    /database disk image/i,
+    /\bcursor\b/i,
+    /Unexpected token/i,
+    /JSON/i,
+    /Failed to fetch/i,
+    /NetworkError/i,
+    /undefined is not/i,
+    /is not a function/i,
+    /\bError\b\s*:/i,
+    /[a-z_]+\.(py|js):\d+/i,
+    /\bat\s+\w+\s+\(/i,
   ];
   if (blockedPatterns.some((pattern) => pattern.test(text))) {
     return fallback;
   }
+  if (text.length > 160) return fallback;
   return text;
 }
 
