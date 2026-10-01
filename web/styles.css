@@ -2686,7 +2686,7 @@ body.theme-premium {
   letter-spacing: 0.1em;
   font-size: 0.76rem;
   font-weight: 700;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   background: color-mix(in srgb, var(--surface-2) 96%, transparent);
   backdrop-filter: blur(8px);
 }
@@ -2948,35 +2948,46 @@ body.theme-premium {
 
 /* Section headings must never be gradient-clipped into invisibility */
 [data-theme="light"] .theme-premium .home-hero h2 {
-  background: none;
-  -webkit-text-fill-color: currentColor;
-  color: #fbf9f4;
+  background: linear-gradient(94deg, #14161b 16%, #8a6320 98%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
-/* The home hero stays deliberately cinematic in light mode */
+/* The hero is a light surface in light appearance. A dark slab here was the one
+   remaining dark component in the whole light theme, and it also forced
+   light-theme border tokens onto a near-black panel, which erased the
+   separators above the headline numerals. */
 [data-theme="light"] .theme-premium .home-hero {
   background-image:
-    radial-gradient(760px 340px at 88% 6%, rgba(77, 125, 255, 0.3), transparent 68%),
-    radial-gradient(620px 300px at 6% 94%, rgba(232, 162, 58, 0.22), transparent 70%),
-    linear-gradient(158deg, #15181f 0%, #0b0d12 100%);
-  background-color: #0b0d12;
-  border-color: rgba(255, 255, 255, 0.12);
-  color: #fbf9f4;
+    radial-gradient(760px 340px at 88% 6%, rgba(77, 125, 255, 0.12), transparent 68%),
+    radial-gradient(620px 300px at 6% 94%, rgba(232, 162, 58, 0.1), transparent 70%),
+    linear-gradient(158deg, #ffffff 0%, #f7f4ee 100%);
+  background-color: #ffffff;
+  border-color: var(--ring-medium);
+  color: var(--text-strong);
 }
 
 [data-theme="light"] .theme-premium .home-hero h1,
-[data-theme="light"] .theme-premium .home-hero h2,
 [data-theme="light"] .theme-premium .home-hero h3,
 [data-theme="light"] .theme-premium .home-hero strong,
 [data-theme="light"] .theme-premium .home-hero .context-stat strong {
-  color: #fbf9f4;
+  color: var(--text-strong);
 }
 
 [data-theme="light"] .theme-premium .home-hero p,
 [data-theme="light"] .theme-premium .home-hero .muted,
 [data-theme="light"] .theme-premium .home-hero .hero-manifesto,
 [data-theme="light"] .theme-premium .home-hero .context-stat span {
-  color: rgba(251, 249, 244, 0.74);
+  color: var(--text-secondary);
+}
+
+/* The dark-theme glow behind big numerals becomes a smudge on white. */
+[data-theme="light"] .theme-premium .home-hero .hero-season-value strong,
+[data-theme="light"] .theme-premium .home-hero .context-stat strong,
+[data-theme="light"] .theme-premium .home-hero .hero-result span {
+  text-shadow: none;
 }
 
 [data-theme="light"] .theme-premium .home-hero [class*="card"],
@@ -2984,9 +2995,18 @@ body.theme-premium {
 [data-theme="light"] .theme-premium .home-hero [class*="chip"],
 [data-theme="light"] .theme-premium .home-hero [class*="pill"],
 [data-theme="light"] .theme-premium .home-hero [class*="block"] {
-  background-color: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.16);
-  color: #fbf9f4;
+  background-color: color-mix(in srgb, var(--accent-blue) 5%, #ffffff);
+  border-color: var(--ring-subtle);
+  color: var(--text-strong);
+}
+
+/* The season column is a bordered column, not a card. The generic tint gave it
+   a zero-padding rectangle whose text sat flush against every edge, and it
+   replaced the amber accent the dark theme uses. Keep both themes identical. */
+[data-theme="light"] .theme-premium .home-hero .hero-season-panel {
+  background-color: transparent;
+  border-color: transparent;
+  border-left: 2px solid color-mix(in srgb, var(--accent-amber) 70%, transparent);
 }
 
 /* Status banner reads as product language, not a console line */
@@ -3229,14 +3249,14 @@ body.theme-premium {
   text-decoration-color: #12306e;
 }
 
-/* The home hero stays dark in light appearance, so its links stay light. */
+/* The hero is a light surface in light appearance, so its links read as links. */
 [data-theme="light"] .theme-premium .home-hero .quick-link,
 [data-theme="light"] .theme-premium .home-hero .link-btn,
 [data-theme="light"] .theme-premium .home-hero .inline-player,
 [data-theme="light"] .theme-premium .home-hero .fixture-open-chip,
 [data-theme="light"] .theme-premium .home-hero .replay-chip {
-  color: #e8f0ff;
-  text-decoration-color: rgba(232, 240, 255, 0.5);
+  color: #1d4ed8;
+  text-decoration-color: rgba(29, 78, 216, 0.45);
 }
 
 [data-theme="light"] .theme-premium .home-hero .quick-link:hover:not(:disabled),
@@ -3244,8 +3264,8 @@ body.theme-premium {
 [data-theme="light"] .theme-premium .home-hero .inline-player:hover:not(:disabled),
 [data-theme="light"] .theme-premium .home-hero .fixture-open-chip:hover:not(:disabled),
 [data-theme="light"] .theme-premium .home-hero .replay-chip:hover:not(:disabled) {
-  color: #ffffff;
-  text-decoration-color: #ffffff;
+  color: #12306e;
+  text-decoration-color: #12306e;
 }
 
 /* Squad signal chips carry both chip and link classes: the chip surface wins,
@@ -3423,3 +3443,94 @@ body.theme-premium {
 
 
 
+/* =========================================================
+   ANCHORS
+   No rule ever targeted <a>, so the provenance "source" link in
+   Ask evidence rendered with the browser default link blue and
+   would turn default purple once visited, in both appearances.
+   ========================================================= */
+.theme-premium a,
+.theme-premium a:visited {
+  color: color-mix(in srgb, var(--accent-lime) 72%, var(--text-strong) 28%);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--accent-lime) 58%, transparent);
+}
+.theme-premium a:hover,
+.theme-premium a:focus-visible {
+  color: var(--text-strong);
+  text-decoration-color: currentColor;
+}
+[data-theme="light"] .theme-premium a,
+[data-theme="light"] .theme-premium a:visited {
+  color: #1d4ed8;
+  text-decoration-color: rgba(29, 78, 216, 0.45);
+}
+[data-theme="light"] .theme-premium a:hover,
+[data-theme="light"] .theme-premium a:focus-visible {
+  color: #12306e;
+  text-decoration-color: #12306e;
+}
+/* =========================================================
+   HOME - REALITY/FUTURE BRIDGE + LIVE INTELLIGENCE STREAM
+   The bridge wrapped mid-sequence and left an arrow pointing at
+   nothing; the stream cards were centre-aligned so no edge lined
+   up; the action labels broke mid-phrase inside a 153px column;
+   the left panel ended 248px above its own bottom border; and the
+   trailing caption sat on the numeral line instead of the labels.
+   ========================================================= */
+/* Keep the three-step sequence on one row so an arrow is never orphaned. */
+.future-bridge {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+}
+.future-bridge .future-now,
+.future-bridge .future-learned,
+.future-bridge .future-next {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.future-bridge .future-arrow {
+  align-self: center;
+}
+/* Fill the panel instead of leaving a void above its bottom border. */
+.future-bridge-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.future-bridge-panel .inline-actions {
+  margin-top: auto;
+}
+/* Stream cards share one top edge and one height. */
+.discovery-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+  align-items: stretch;
+  gap: 8px;
+}
+/* The action list takes the full row so labels stop breaking mid-phrase. */
+.stream-item.action {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: start;
+  align-items: center;
+  gap: 8px;
+}
+/* The trailing caption belongs on the caption line. */
+.data-statement {
+  align-items: end;
+}
+@media (max-width: 760px) {
+  .future-bridge {
+    grid-template-columns: 1fr;
+  }
+  .future-bridge .future-arrow {
+    display: none;
+  }
+}
