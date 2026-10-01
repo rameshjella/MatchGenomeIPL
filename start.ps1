@@ -1,5 +1,5 @@
 param(
-    [string]$BindHost = "127.0.0.1",
+    [string]$BindHost = "0.0.0.0",
     [int]$Port = 8080,
     [switch]$Lan
 )
@@ -41,7 +41,7 @@ if ($env:MATCHGENOME_HOST -eq "0.0.0.0") {
         Where-Object { $_.IPAddress -notlike "169.254.*" -and $_.IPAddress -ne "127.0.0.1" } |
         Select-Object -First 1 -ExpandProperty IPAddress)
     if ($ipv4) {
-        Write-Host "[LAN] Open from another laptop: http://${ipv4}:$($env:MATCHGENOME_PORT)"
+        Write-Host "[LAN] Open from another system/mobile on same Wi-Fi: http://${ipv4}:$($env:MATCHGENOME_PORT)"
     } else {
         Write-Host "[LAN] Host is exposed on all interfaces. Use this machine's IPv4 address with port $($env:MATCHGENOME_PORT)."
     }

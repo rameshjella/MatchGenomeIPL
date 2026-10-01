@@ -170,25 +170,41 @@ Secrets are not logged; runtime does not emit credential values.
 .\start.ps1
 ```
 
-To open from another laptop on the same network (LAN), start with:
+By default, startup binds to LAN (`0.0.0.0`), so the app is reachable from other systems/mobile on the same Wi-Fi.
+
+To force local-only access on this machine:
 
 ```powershell
-.\start.ps1 -Lan
+.\start.ps1 -BindHost 127.0.0.1
 ```
 
 Optional explicit bind/port:
 
 ```powershell
-.\start.ps1 -Host 0.0.0.0 -Port 8080
+.\start.ps1 -BindHost 0.0.0.0 -Port 8080
 ```
 
-When LAN mode is used, startup logs print a URL you can open from another laptop.
+Startup logs print a LAN URL you can open from another system or mobile browser on the same Wi-Fi.
 
 ### Linux/macOS
 
 ```bash
 chmod +x start.sh
 ./start.sh
+```
+
+By default, startup binds to LAN (`0.0.0.0`) and prints a reachable LAN URL.
+
+To force local-only access on this machine:
+
+```bash
+./start.sh --host 127.0.0.1
+```
+
+Optional explicit bind/port:
+
+```bash
+./start.sh --host 0.0.0.0 --port 8080
 ```
 
 ### Direct runner (alternative)

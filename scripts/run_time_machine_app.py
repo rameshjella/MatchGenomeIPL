@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import socket
 import sys
 import time
 
@@ -15,6 +16,20 @@ from matchgenomeipl.ingestion import ensure_dataset_ready
 from matchgenomeipl.database import connect_db, database_runtime_status
 from matchgenomeipl.enrichment import run_cricsheet_enrichment
 from matchgenomeipl.runtime_logging import log_event
+
+
+def _resolve_lan_ipv4() -> str | None:
+    """Best-effort LAN IPv4 for user-facing URLs when bound to 0.0.0.0."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            # No packets are sent; connect() asks the OS to pick an outbound route.
+            sock.connect(("8.8.8.8", 80))
+            ip = sock.getsockname()[0]
+    except OSError:
+        return None
+    if ip.startswith("127.") or ip.startswith("169.254."):
+        return None
+    return ip
 
 
 def main() -> None:
@@ -65,7 +80,20 @@ def main() -> None:
 
     server = create_http_server(db_path=db_path, host=host, port=port)
     url = f"http://{host}:{port}"
-    log_event("SERVER", "HTTP transport ready", host=host, port=port, url=url)
+    if host == "0.0.0.0":
+        lan_ip = _resolve_lan_ipv4()
+        lan_url = f"http://{lan_ip}:{port}" if lan_ip else None
+        log_event(
+            "SERVER",
+            "HTTP transport ready",
+            host=host,
+            port=port,
+            url=url,
+            local_url=f"http://127.0.0.1:{port}",
+            lan_url=lan_url,
+        )
+    else:
+        log_event("SERVER", "HTTP transport ready", host=host, port=port, url=url)
     log_event("READY", "MatchGenomeIPL is ready", startup_seconds=round(time.perf_counter() - started, 3))
     try:
         server.serve_forever()
