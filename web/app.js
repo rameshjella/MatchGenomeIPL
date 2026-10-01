@@ -440,7 +440,8 @@ function setView(view) {
   nav.forEach(([button, active]) => {
     if (!button) return;
     button.classList.toggle("primary", active);
-    button.setAttribute("aria-current", active ? "page" : "false");
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
   });
 
   updateContextBreadcrumb();
@@ -517,9 +518,11 @@ function setMatchesTab(tab) {
   state.matchesTab = tab === "results" ? "results" : "fixtures";
   if (els.matchTabFixturesBtn) {
     els.matchTabFixturesBtn.classList.toggle("active", state.matchesTab === "fixtures");
+    els.matchTabFixturesBtn.setAttribute("aria-selected", state.matchesTab === "fixtures" ? "true" : "false");
   }
   if (els.matchTabResultsBtn) {
     els.matchTabResultsBtn.classList.toggle("active", state.matchesTab === "results");
+    els.matchTabResultsBtn.setAttribute("aria-selected", state.matchesTab === "results" ? "true" : "false");
   }
   els.fixturesList.hidden = state.matchesTab !== "fixtures";
   if (els.resultsList) {
@@ -1397,6 +1400,7 @@ function setPlayerTab(tab) {
     btn.hidden = !visible;
     const active = visible && name === tab;
     btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
     panel.hidden = !active;
   });
 }

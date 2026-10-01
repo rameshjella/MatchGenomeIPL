@@ -684,7 +684,9 @@ summary:focus-visible {
 
 .tab-btn.active {
   border-color: color-mix(in srgb, var(--predict) 58%, var(--line-soft) 42%);
-  background: color-mix(in srgb, var(--predict) 24%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--predict) 32%, #fff 68%), color-mix(in srgb, var(--predict) 22%, transparent));
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--predict) 30%, transparent);
 }
 
 .match-discovery-layout {
@@ -1333,7 +1335,7 @@ summary:focus-visible {
 
 summary {
   cursor: pointer;
-  color: #e5d5be;
+  color: var(--text-soft);
 }
 
 .sr-only {
@@ -1858,9 +1860,11 @@ body.theme-premium::before {
 .theme-premium .home-season-node.active,
 .theme-premium .genome-node.active,
 .theme-premium .match-phase-node.active {
-  color: var(--text-strong);
-  border-color: color-mix(in srgb, var(--accent-lime) 60%, rgba(255, 255, 255, 0.12) 40%);
-  background: linear-gradient(150deg, rgba(183, 243, 74, 0.22), rgba(62, 92, 29, 0.28));
+  color: #ffffff;
+  border-color: #2f55c9;
+  background-color: #3a67e8;
+  background-image: linear-gradient(180deg, #3f6ced, #2f55c9);
+  box-shadow: 0 6px 16px rgba(77, 125, 255, 0.28);
 }
 
 .theme-premium .quick-link,
@@ -2124,11 +2128,9 @@ body.theme-premium::before {
 @keyframes reveal-step-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
@@ -2486,8 +2488,9 @@ body.theme-premium {
 .theme-premium .mode-nav button.primary,
 .theme-premium .mode-nav button[aria-current="page"] {
   color: #ffffff;
-  border-color: color-mix(in srgb, var(--accent-blue) 60%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-blue) 92%, #fff 8%), color-mix(in srgb, var(--accent-blue) 78%, #000 22%));
+  border-color: #2f55c9;
+  background-color: #3a67e8;
+  background-image: linear-gradient(180deg, #3f6ced, #2f55c9);
   box-shadow: 0 6px 16px rgba(77, 125, 255, 0.3);
 }
 
@@ -2584,8 +2587,9 @@ body.theme-premium {
 .theme-premium .control-row button.dominant,
 .theme-premium #predictBtn {
   color: #ffffff;
-  border-color: color-mix(in srgb, var(--accent-blue) 64%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-blue) 94%, #fff 6%), color-mix(in srgb, var(--accent-blue) 76%, #000 24%));
+  border-color: #2f55c9;
+  background-color: #3a67e8;
+  background-image: linear-gradient(180deg, #3f6ced, #2f55c9);
   box-shadow: 0 8px 20px rgba(77, 125, 255, 0.28);
 }
 
@@ -2593,7 +2597,8 @@ body.theme-premium {
 .theme-premium #revealBtn:not(:disabled) {
   color: #12100c;
   border-color: color-mix(in srgb, var(--accent-amber) 70%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-amber) 96%, #fff 4%), color-mix(in srgb, var(--accent-amber) 80%, #000 20%));
+  background-color: #e8a23a;
+  background-image: linear-gradient(180deg, #efad48, #d08c26);
   box-shadow: 0 8px 20px rgba(232, 162, 58, 0.26);
 }
 
@@ -2647,10 +2652,11 @@ body.theme-premium {
 }
 
 .theme-premium .tab-btn.active {
-  color: var(--text-strong);
-  border-color: var(--ring-medium);
-  background: color-mix(in srgb, var(--surface-3) 88%, transparent);
-  box-shadow: var(--shadow-1);
+  color: #ffffff;
+  border-color: #2f55c9;
+  background-color: #3a67e8;
+  background-image: linear-gradient(180deg, #3f6ced, #2f55c9);
+  box-shadow: 0 6px 16px rgba(77, 125, 255, 0.28);
 }
 
 /* ------Data / tables ------*/
@@ -3020,10 +3026,10 @@ body.theme-premium {
 [data-theme="light"] .theme-premium .mode-nav button[aria-current="page"],
 [data-theme="light"] .theme-premium button.primary,
 [data-theme="light"] .theme-premium .control-row button.dominant {
-  background-image: linear-gradient(180deg, #5d89ff, #3a67e8);
-  background-color: #4d7dff;
+  background-image: linear-gradient(180deg, #3f6ced, #2f55c9);
+  background-color: #3a67e8;
   color: #ffffff;
-  border-color: #3a67e8;
+  border-color: #2f55c9;
 }
 
 [data-theme="light"] .theme-premium .mode-nav {
@@ -3031,9 +3037,23 @@ body.theme-premium {
 }
 
 [data-theme="light"] .theme-premium .tab-btn.active {
-  background-color: #ffffff;
-  border-color: var(--ring-medium);
-  color: var(--text-strong);
+  background-image: linear-gradient(180deg, #3f6ced, #2f55c9);
+  background-color: #3a67e8;
+  border-color: #2f55c9;
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(58, 103, 232, 0.26);
+}
+
+[data-theme="light"] .theme-premium .season-node.active,
+[data-theme="light"] .theme-premium .home-season-node.active,
+[data-theme="light"] .theme-premium .genome-node.active,
+[data-theme="light"] .theme-premium .match-phase-node.active,
+[data-theme="light"] .theme-premium .season-trail-step.active {
+  background-image: linear-gradient(180deg, #3f6ced, #2f55c9);
+  background-color: #3a67e8;
+  border-color: #2f55c9;
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(58, 103, 232, 0.26);
 }
 
 [data-theme="light"] .theme-premium .mini-table thead th {
@@ -3084,8 +3104,9 @@ body.theme-premium {
 
 .theme-premium .season-trail-step.active {
   color: #ffffff;
-  border-color: color-mix(in srgb, var(--accent-blue) 58%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-blue) 92%, #fff 8%), color-mix(in srgb, var(--accent-blue) 78%, #000 22%));
+  border-color: #2f55c9;
+  background-color: #3a67e8;
+  background-image: linear-gradient(180deg, #3f6ced, #2f55c9);
   box-shadow: 0 6px 14px rgba(77, 125, 255, 0.28);
 }
 
@@ -3099,8 +3120,8 @@ body.theme-premium {
 }
 
 [data-theme="light"] .theme-premium .season-trail-step.active {
-  background-image: linear-gradient(180deg, #5d89ff, #3a67e8);
-  background-color: #4d7dff;
+  background-image: linear-gradient(180deg, #3f6ced, #2f55c9);
+  background-color: #3a67e8;
   color: #ffffff;
 }
 
@@ -3164,6 +3185,159 @@ body.theme-premium {
   color: #2b313b;
   background-color: #f1eee7;
   border-color: var(--ring-medium);
+}
+
+/* =========================================================
+   INTERACTIVE STATE READABILITY
+   Resting and hover colours must stay legible on the surface
+   the widget actually sits on, in both appearances.
+   ========================================================= */
+
+/* Light appearance: lime link/chip colours disappear on white surfaces. */
+[data-theme="light"] .theme-premium .quick-link,
+[data-theme="light"] .theme-premium .link-btn,
+[data-theme="light"] .theme-premium .inline-player,
+[data-theme="light"] .theme-premium .fixture-open-chip,
+[data-theme="light"] .theme-premium .replay-chip,
+[data-theme="light"] .theme-premium .ask-entity-link,
+[data-theme="light"] .theme-premium .ask-player-link,
+[data-theme="light"] .theme-premium .ask-season-link,
+[data-theme="light"] .theme-premium .ask-match-link {
+  color: #1d4ed8;
+  background-color: transparent;
+  text-decoration-color: rgba(29, 78, 216, 0.45);
+}
+
+[data-theme="light"] .theme-premium .quick-link:hover:not(:disabled),
+[data-theme="light"] .theme-premium .link-btn:hover:not(:disabled),
+[data-theme="light"] .theme-premium .inline-player:hover:not(:disabled),
+[data-theme="light"] .theme-premium .fixture-open-chip:hover:not(:disabled),
+[data-theme="light"] .theme-premium .replay-chip:hover:not(:disabled),
+[data-theme="light"] .theme-premium .ask-entity-link:hover:not(:disabled),
+[data-theme="light"] .theme-premium .ask-player-link:hover:not(:disabled),
+[data-theme="light"] .theme-premium .ask-season-link:hover:not(:disabled),
+[data-theme="light"] .theme-premium .ask-match-link:hover:not(:disabled),
+[data-theme="light"] .theme-premium .quick-link:focus-visible,
+[data-theme="light"] .theme-premium .link-btn:focus-visible,
+[data-theme="light"] .theme-premium .inline-player:focus-visible {
+  color: #12306e;
+  text-decoration-color: #12306e;
+}
+
+/* The home hero stays dark in light appearance, so its links stay light. */
+[data-theme="light"] .theme-premium .home-hero .quick-link,
+[data-theme="light"] .theme-premium .home-hero .link-btn,
+[data-theme="light"] .theme-premium .home-hero .inline-player,
+[data-theme="light"] .theme-premium .home-hero .fixture-open-chip,
+[data-theme="light"] .theme-premium .home-hero .replay-chip {
+  color: #e8f0ff;
+  text-decoration-color: rgba(232, 240, 255, 0.5);
+}
+
+[data-theme="light"] .theme-premium .home-hero .quick-link:hover:not(:disabled),
+[data-theme="light"] .theme-premium .home-hero .link-btn:hover:not(:disabled),
+[data-theme="light"] .theme-premium .home-hero .inline-player:hover:not(:disabled),
+[data-theme="light"] .theme-premium .home-hero .fixture-open-chip:hover:not(:disabled),
+[data-theme="light"] .theme-premium .home-hero .replay-chip:hover:not(:disabled) {
+  color: #ffffff;
+  text-decoration-color: #ffffff;
+}
+
+/* Squad signal chips carry both chip and link classes: the chip surface wins,
+   and the player name must stay readable at rest and on hover. */
+.theme-premium .entity-chip.inline-player,
+.theme-premium .entity-chip.inline-player span,
+.theme-premium .entity-chip.inline-player strong {
+  text-decoration: none;
+  color: var(--text-strong);
+}
+
+.theme-premium .entity-chip.inline-player:hover:not(:disabled),
+.theme-premium .entity-chip.inline-player:hover:not(:disabled) span,
+.theme-premium .entity-chip.inline-player:hover:not(:disabled) strong {
+  color: var(--text-strong);
+}
+
+.theme-premium .entity-chip.inline-player:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent-lime) 55%, rgba(255, 255, 255, 0.18) 45%);
+  background: linear-gradient(145deg, rgba(44, 59, 70, 0.95), rgba(30, 40, 48, 0.98));
+}
+
+[data-theme="light"] .theme-premium .entity-chip.inline-player,
+[data-theme="light"] .theme-premium .entity-chip.inline-player span,
+[data-theme="light"] .theme-premium .entity-chip.inline-player strong {
+  color: #14161b;
+}
+
+[data-theme="light"] .theme-premium .entity-chip.inline-player:hover:not(:disabled) {
+  background-image: none;
+  background-color: #eef3ff;
+  border-color: color-mix(in srgb, #1d4ed8 42%, transparent);
+}
+
+[data-theme="light"] .theme-premium .entity-chip.inline-player:hover:not(:disabled),
+[data-theme="light"] .theme-premium .entity-chip.inline-player:hover:not(:disabled) span,
+[data-theme="light"] .theme-premium .entity-chip.inline-player:hover:not(:disabled) strong {
+  color: #12306e;
+}
+
+/* Active navigation must keep its selected surface on hover instead of
+   flattening to a tint that leaves white label text unreadable. */
+[data-theme="light"] .theme-premium .mode-nav button:hover:not(:disabled) {
+  background-color: rgba(16, 18, 24, 0.05);
+  color: var(--text-strong);
+}
+
+[data-theme="light"] .theme-premium .mode-nav button.primary:hover:not(:disabled),
+[data-theme="light"] .theme-premium .mode-nav button[aria-current="page"]:hover:not(:disabled),
+[data-theme="light"] .theme-premium button.primary:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #3a66e6, #27499f);
+  background-color: #2f55c9;
+  color: #ffffff;
+  border-color: #27499f;
+}
+
+.theme-premium .mode-nav button.primary:hover:not(:disabled),
+.theme-premium .mode-nav button[aria-current="page"]:hover:not(:disabled) {
+  color: #ffffff;
+  background-color: #2f55c9;
+  background-image: linear-gradient(180deg, #3a66e6, #27499f);
+  border-color: #27499f;
+}
+
+/* Tabs, nodes and chips keep a visible label on hover in light appearance. */
+[data-theme="light"] .theme-premium .tab-btn:hover:not(:disabled),
+[data-theme="light"] .theme-premium .season-node:hover:not(:disabled),
+[data-theme="light"] .theme-premium .home-season-node:hover:not(:disabled),
+[data-theme="light"] .theme-premium .genome-node:hover:not(:disabled),
+[data-theme="light"] .theme-premium .ask-examples button:hover:not(:disabled),
+[data-theme="light"] .theme-premium .ask-domain-strip button:hover:not(:disabled),
+[data-theme="light"] .theme-premium .entity-chip:hover:not(:disabled) {
+  background-image: none;
+  background-color: #eef3ff;
+  border-color: color-mix(in srgb, #1d4ed8 34%, transparent);
+  color: #14161b;
+}
+
+[data-theme="light"] .theme-premium .tab-btn.active:hover:not(:disabled),
+[data-theme="light"] .theme-premium .season-node.active:hover:not(:disabled),
+[data-theme="light"] .theme-premium .home-season-node.active:hover:not(:disabled),
+[data-theme="light"] .theme-premium .genome-node.active:hover:not(:disabled) {
+  background-color: #2f55c9;
+  background-image: linear-gradient(180deg, #3a66e6, #27499f);
+  border-color: #27499f;
+  color: #ffffff;
+}
+
+[data-theme="light"] .theme-premium .season-trail-step:hover:not(:disabled) {
+  background-color: #eef3ff;
+  color: #14161b;
+}
+
+[data-theme="light"] .theme-premium .season-trail-step.active:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #3a66e6, #27499f);
+  background-color: #2f55c9;
+  color: #ffffff;
 }
 
 
