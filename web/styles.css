@@ -1611,6 +1611,9 @@ body.theme-premium::before {
   max-width: 1540px;
   gap: 16px;
   padding: 16px clamp(12px, 2vw, 34px) 30px;
+  /* Async view content renders after first paint; scroll anchoring would nudge
+     the viewport and make the hero position differ on every refresh. */
+  overflow-anchor: none;
 }
 
 .theme-premium .muted,
@@ -2128,9 +2131,11 @@ body.theme-premium::before {
 @keyframes reveal-step-in {
   from {
     opacity: 0;
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -2355,8 +2360,8 @@ body.theme-premium {
 
 .theme-premium .eyebrow {
   color: color-mix(in srgb, var(--accent-blue) 52%, var(--text-secondary) 48%);
-  letter-spacing: 0.17em;
-  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  font-size: 0.78rem;
   font-weight: 700;
 }
 
@@ -2380,8 +2385,8 @@ body.theme-premium {
   display: block;
   margin-top: 6px;
   text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  font-size: 0.76rem;
   color: var(--text-muted);
 }
 
@@ -2441,8 +2446,8 @@ body.theme-premium {
 
 .theme-premium .hero-season-kicker {
   text-transform: uppercase;
-  letter-spacing: 0.2em;
-  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  font-size: 0.76rem;
   font-weight: 700;
   color: var(--accent-amber);
 }
@@ -2678,8 +2683,8 @@ body.theme-premium {
   top: 0;
   z-index: 2;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  font-size: 0.76rem;
   font-weight: 700;
   color: var(--text-muted);
   background: color-mix(in srgb, var(--surface-2) 96%, transparent);
@@ -3338,6 +3343,82 @@ body.theme-premium {
   background-image: linear-gradient(180deg, #3a66e6, #27499f);
   background-color: #2f55c9;
   color: #ffffff;
+}
+
+/* =========================================================
+   LIGHT APPEARANCE - DYNAMICALLY RENDERED RESULTS
+   These surfaces are injected after a user action and their
+   class names fall outside the generic normalizer selectors,
+   so they kept emitting dark theme panels in light appearance.
+   ========================================================= */
+
+[data-theme="light"] .theme-premium .ask-layer,
+[data-theme="light"] .theme-premium .match-moment-object,
+[data-theme="light"] .theme-premium .match-moment-object.major,
+[data-theme="light"] .theme-premium .workspace-header,
+[data-theme="light"] .theme-premium #replayPanel .workspace-header,
+[data-theme="light"] .theme-premium .ledger-row,
+[data-theme="light"] .theme-premium .expectation-line,
+[data-theme="light"] .theme-premium .metric-rail,
+[data-theme="light"] .theme-premium .explain-block {
+  background-image: none;
+  background-color: var(--surface-1);
+  border-color: var(--ring-subtle);
+  color: var(--text-strong);
+}
+
+[data-theme="light"] .theme-premium .ask-layer p,
+[data-theme="light"] .theme-premium .ask-layer li,
+[data-theme="light"] .theme-premium .ask-layer span,
+[data-theme="light"] .theme-premium .match-moment-object p,
+[data-theme="light"] .theme-premium .workspace-header p {
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .theme-premium .ask-layer h2,
+[data-theme="light"] .theme-premium .ask-layer h3,
+[data-theme="light"] .theme-premium .ask-layer h4,
+[data-theme="light"] .theme-premium .ask-layer strong,
+[data-theme="light"] .theme-premium .match-moment-object strong,
+[data-theme="light"] .theme-premium .workspace-header h2,
+[data-theme="light"] .theme-premium .workspace-header h3 {
+  color: var(--text-strong);
+}
+
+/* A highlighted moment keeps semantic emphasis instead of a dark slab. */
+[data-theme="light"] .theme-premium .match-moment-object.major {
+  background-color: color-mix(in srgb, var(--accent-amber) 14%, #ffffff);
+  border-color: color-mix(in srgb, var(--accent-amber) 52%, transparent);
+}
+
+/* Selected cards must stay visibly selected in light appearance. */
+[data-theme="light"] .theme-premium .match-card.active,
+[data-theme="light"] .theme-premium .fixture-card.active {
+  background-image: none;
+  background-color: color-mix(in srgb, var(--accent-blue) 12%, #ffffff);
+  border-color: color-mix(in srgb, var(--accent-blue) 55%, transparent);
+}
+
+/* The match picker keeps a dark surface once the prediction theatre opens
+   because `.time-machine-layout.stage-active .discovery-pane` is a four-class
+   selector and outranks the generic [class*="pane"] normalizer. It needs an
+   equally specific light rule or its dark text lands on a dark panel. */
+[data-theme="light"] .theme-premium .time-machine-layout.stage-active .discovery-pane {
+  background-image: none;
+  background-color: var(--surface-1);
+  border-color: var(--ring-subtle);
+  color: var(--text-strong);
+  opacity: 1;
+}
+
+[data-theme="light"] .theme-premium .time-machine-layout.stage-active .discovery-pane h3,
+[data-theme="light"] .theme-premium .time-machine-layout.stage-active .discovery-pane strong {
+  color: var(--text-strong);
+}
+
+[data-theme="light"] .theme-premium .time-machine-layout.stage-active .discovery-pane .muted,
+[data-theme="light"] .theme-premium .time-machine-layout.stage-active .discovery-pane label {
+  color: var(--text-secondary);
 }
 
 

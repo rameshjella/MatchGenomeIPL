@@ -1169,6 +1169,15 @@ async function loadHomeLaunchpad(selectedSeason = null) {
         loadHomeLaunchpad(seasonId).catch((err) => setStatus(err.message || "Failed to refresh home chapter", "error"));
       });
     });
+    // The timeline scrolls horizontally; without this the selected season chip
+    // renders outside the visible strip.
+    const activeNode = els.homeSeasonTimeline.querySelector(".home-season-node.active");
+    if (activeNode) {
+      els.homeSeasonTimeline.scrollLeft = Math.max(
+        0,
+        activeNode.offsetLeft - els.homeSeasonTimeline.clientWidth / 2 + activeNode.offsetWidth / 2,
+      );
+    }
   }
 
   if (els.homeSeasonStory) {
@@ -3030,6 +3039,7 @@ async function bootstrap() {
     setUiState(UiState.SELECT_MATCH);
     await compareSeasonSignals();
     syncRoute();
+    window.scrollTo(0, 0);
     clearStatus();
   } catch (err) {
     setStatus(err.message || "Unable to initialize the product.", "error");

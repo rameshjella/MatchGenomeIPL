@@ -16,6 +16,14 @@
     <script>
       (function () {
         try {
+          // Hash routes here are view names, not scroll anchors. Browser scroll
+          // restoration combined with async content growth compounds the scroll
+          // offset on every refresh, so restoration is owned by the app.
+          if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+        } catch (err) {
+          /* restoration stays at the browser default */
+        }
+        try {
           var stored = localStorage.getItem("mg-theme");
           var prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
           document.documentElement.setAttribute("data-theme", stored || (prefersLight ? "light" : "dark"));
