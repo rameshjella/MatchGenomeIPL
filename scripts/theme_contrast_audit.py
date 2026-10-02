@@ -54,8 +54,52 @@ function ratio(a, b) {
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 function label(el) {
-  return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') +
-    (el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\s+/).slice(0, 3).join('.') : '');
+  function own(n) {
+    return n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') +
+      (n.className && typeof n.className === 'string' ? '.' + n.className.trim().split(/\s+/).slice(0, 3).join('.') : '');
+  }
+  const parent = el.parentElement ? own(el.parentElement) + ' > ' : '';
+  return parent + own(el);
+}
+function over(fg, bg) {
+  const a = fg.a;
+  return { r: fg.r * a + bg.r * (1 - a), g: fg.g * a + bg.g * (1 - a), b: fg.b * a + bg.b * (1 - a), a: 1 };
+}
+// A widget can paint itself with a gradient while its background-color stays
+// transparent. Ignoring that layer is how a near-black chip with inherited
+// dark text can pass a naive contrast check.
+function gradientColor(bi) {
+  if (!bi || bi.indexOf('gradient') < 0) return null;
+  const stops = [...bi.matchAll(/rgba?\(([^)]+)\)/g)]
+    .map(function (m) { const p = m[1].split(',').map(parseFloat); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; })
+    .filter(function (s) { return s.a > 0.05; });
+  if (!stops.length) return null;
+  const n = stops.length;
+  return stops.reduce(function (acc, s) { return { r: acc.r + s.r / n, g: acc.g + s.g / n, b: acc.b + s.b / n, a: acc.a + s.a / n }; }, { r: 0, g: 0, b: 0, a: 0 });
+}
+function paintedBackground(el, mode) {
+  // Composite downward from the nearest fully opaque ancestor. Page-level
+  // atmosphere gradients sit below that and must not be averaged in.
+  const chain = [];
+  let p = el;
+  while (p && p !== document.documentElement) {
+    chain.push(p);
+    const c = parse(getComputedStyle(p).backgroundColor);
+    if (c && c.a >= 0.99) break;
+    p = p.parentElement;
+  }
+  let base = null;
+  const last = chain[chain.length - 1];
+  if (last) { const c = parse(getComputedStyle(last).backgroundColor); if (c && c.a >= 0.99) base = { r: c.r, g: c.g, b: c.b, a: 1 }; }
+  if (!base) base = mode === 'light' ? { r: 247, g: 245, b: 240, a: 1 } : { r: 10, g: 12, b: 17, a: 1 };
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const cs = getComputedStyle(chain[i]);
+    const g = gradientColor(cs.backgroundImage);
+    if (g) base = over(g, base);
+    const c = parse(cs.backgroundColor);
+    if (c && c.a > 0.01) base = over(c, base);
+  }
+  return base;
 }
 const surfaceIssues = {}, textIssues = {};
 const nodes = document.querySelectorAll('main *');
@@ -72,18 +116,19 @@ for (const el of nodes) {
     if (!legible && mode === 'light' && l < 0.35) surfaceIssues[label(el)] = cs.backgroundColor;
     if (!legible && mode === 'dark' && l > 0.72) surfaceIssues[label(el)] = cs.backgroundColor;
   }
-  // text contrast against nearest painted ancestor background
+  // text contrast against the colour actually painted behind it
   if (el.childElementCount === 0 && el.textContent.trim().length > 1) {
-    let p = el, abg = null;
-    while (p && p !== document.documentElement) {
-      const c = parse(getComputedStyle(p).backgroundColor);
-      if (c && c.a > 0.85) { abg = c; break; }
-      p = p.parentElement;
-    }
-    if (!abg || abg.a < 0.85) abg = (mode === 'light' ? { r: 247, g: 245, b: 240, a: 1 } : { r: 10, g: 12, b: 17, a: 1 });
-    const fg = parse(cs.color);
-    if (fg && fg.a > 0.3 && ratio(fg, abg) < 3.2) {
-      textIssues[label(el)] = cs.color + ' on rgb(' + Math.round(abg.r) + ',' + Math.round(abg.g) + ',' + Math.round(abg.b) + ') ratio=' + ratio(fg, abg).toFixed(2);
+    const clip = cs.webkitBackgroundClip || cs.backgroundClip;
+    const fg = parse(cs.webkitTextFillColor || cs.color);
+    if (!(clip === 'text' && (!fg || fg.a < 0.1))) {
+      const abg = paintedBackground(el, mode);
+      if (fg && fg.a > 0.3) {
+        const eff = fg.a < 1 ? over(fg, abg) : fg;
+        const ra = ratio(eff, abg);
+        if (ra < 3.2) {
+          textIssues[label(el)] = cs.color + ' on painted rgb(' + Math.round(abg.r) + ',' + Math.round(abg.g) + ',' + Math.round(abg.b) + ') ratio=' + ra.toFixed(2);
+        }
+      }
     }
   }
 }
@@ -125,6 +170,27 @@ def main() -> int:
                     continue
                 time.sleep(0.6)
                 report[f"{theme}:{view_id}"] = driver.execute_script(AUDIT_JS)
+
+            # Dynamically rendered replay widgets are where theme regressions
+            # surface, so they are part of the audit rather than a separate pass.
+            try:
+                driver.execute_script("document.getElementById('goReplayBtn').click();")
+                time.sleep(0.8)
+                cards = driver.find_elements(By.CSS_SELECTOR, "#matchCards [role='listitem'], #matchCards button")
+                if cards:
+                    driver.execute_script("arguments[0].click();", cards[0])
+                    time.sleep(0.8)
+                    driver.execute_script("document.getElementById('startReplayBtn').click();")
+                    time.sleep(1.2)
+                    driver.execute_script("document.getElementById('predictBtn').click();")
+                    time.sleep(1.5)
+                    driver.execute_script("document.getElementById('revealBtn').click();")
+                    time.sleep(1.5)
+                    driver.execute_script("document.getElementById('tabBallByBallBtn').click();")
+                    time.sleep(0.8)
+                    report[f"{theme}:replay-ball-by-ball"] = driver.execute_script(AUDIT_JS)
+            except Exception as exc:  # noqa: BLE001
+                report[f"{theme}:replay-ball-by-ball"] = {"error": str(exc)[:160]}
     finally:
         driver.quit()
 

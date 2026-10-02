@@ -1840,6 +1840,16 @@ body.theme-premium::before {
   color: var(--text-muted);
 }
 
+/* The replay workspace header paints an arbitrary team-colour gradient behind
+   its labels. The muted token is tuned for neutral surfaces and loses
+   legibility there, so these two label groups step up one level. */
+:root:not([data-theme="light"]) .theme-premium .workspace-header .header-metrics span,
+:root:not([data-theme="light"]) .theme-premium .home-hero .context-stat span,
+:root:not([data-theme="light"]) .theme-premium .team-banner-fallback {
+  color: var(--text-secondary);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
 .theme-premium .season-timeline,
 .theme-premium .match-phase-line {
   scrollbar-width: thin;
@@ -2922,6 +2932,39 @@ body.theme-premium {
   background-color: var(--surface-1);
   color: var(--text-strong);
   border-color: var(--ring-subtle);
+}
+
+/* The normalizer above matches on class-name substrings, so members of the
+   shared dark-gradient group whose names contain none of those substrings
+   (timeline dots, badges, strip buttons) kept a near-black gradient in light
+   appearance. Their text colour is inherited dark, so the label disappeared
+   and the widget read as a solid black chip. Reset the painted layer here,
+   before the later `.active`/semantic rules, so selected states still win. */
+[data-theme="light"] .theme-premium .timeline-dot,
+[data-theme="light"] .theme-premium .badge,
+[data-theme="light"] .theme-premium .tab-btn,
+[data-theme="light"] .theme-premium .ask-domain-strip button,
+[data-theme="light"] .theme-premium .ask-examples button {
+  background-image: none;
+  background-color: var(--surface-1);
+  color: var(--text-strong);
+  border-color: var(--ring-medium);
+}
+
+/* Correct/incorrect stay semantically readable instead of relying on a border
+   alone, matching how the reveal blocks already behave in light appearance. */
+[data-theme="light"] .theme-premium .timeline-dot.correct,
+[data-theme="light"] .theme-premium .badge.correct {
+  background-color: color-mix(in srgb, var(--state-good) 16%, #ffffff);
+  border-color: color-mix(in srgb, var(--state-good) 58%, transparent);
+  color: #14161b;
+}
+
+[data-theme="light"] .theme-premium .timeline-dot.incorrect,
+[data-theme="light"] .theme-premium .badge.incorrect {
+  background-color: color-mix(in srgb, var(--state-bad) 14%, #ffffff);
+  border-color: color-mix(in srgb, var(--state-bad) 58%, transparent);
+  color: #14161b;
 }
 
 [data-theme="light"] .theme-premium h1,
