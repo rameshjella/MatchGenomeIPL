@@ -39,6 +39,42 @@ class TimeMachineTests(unittest.TestCase):
         payload = self.api.post_replays(match_id=1, innings=1)
         return str(payload["session_id"])
 
+    def test_replay_start_points_expose_every_delivery(self) -> None:
+        payload = self.api.get_replay_start_points(1, 1)
+        deliveries = payload["deliveries"]
+        self.assertTrue(deliveries)
+        for item in deliveries:
+            self.assertIn("over_number", item)
+            self.assertIn("ball_number", item)
+            self.assertIn("batter", item)
+            self.assertIn("bowler", item)
+        # Start points must be ordered and non-decreasing in score context.
+        scores = [d["score_before"] for d in deliveries]
+        self.assertEqual(scores, sorted(scores))
+
+    def test_replay_session_survives_service_restart(self) -> None:
+        session_id = self._create_default_session_id()
+        self.api.post_replay_predict(session_id)
+        self.api.post_replay_reveal(session_id)
+        self.api.post_replay_predict(session_id)
+        before = self.api.post_replay_reveal(session_id)["summary"]
+
+        # A new service instance models a process restart: nothing is kept in memory.
+        restarted = TimeMachineAPI(TimeMachineService(self.conn))
+        after = restarted.get_replay(session_id)
+
+        self.assertEqual(after["predictions_revealed"], before["predictions_revealed"])
+        self.assertEqual(after["summary"]["accuracy"], before["accuracy"])
+        self.assertEqual(after["summary"]["actual_outcomes"], before["actual_outcomes"])
+        self.assertEqual(
+            len(restarted.get_replay_ledger(session_id)["entries"]),
+            before["predictions_revealed"],
+        )
+
+    def test_unknown_session_still_rejected_after_persistence(self) -> None:
+        with self.assertRaises(ValueError):
+            self.api.get_replay("00000000-0000-0000-0000-000000000000")
+
     def test_match_discovery_contract(self) -> None:
         seasons = self.api.get_seasons()["seasons"]
         self.assertEqual([s["season_id"] for s in seasons], [2020, 2021])

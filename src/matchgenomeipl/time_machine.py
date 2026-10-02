@@ -259,6 +259,159 @@ class TimeMachineService:
         ensure_knowledge_bootstrap(self.conn)
         self._sessions: dict[str, ReplaySession] = {}
         self._ask_engine = AskMatchGenomeEngine(conn)
+        self._ensure_replay_persistence()
+
+    # ------------------------------------------------------------------
+    # Replay durability
+    #
+    # Replay sessions used to live only in process memory, so a restart (or a
+    # second worker) silently lost a user's travelled position. The durable
+    # record stores only the deterministic session coordinates; the ledger is
+    # reconstructed by re-running the same deterministic predictions, so no
+    # derived/predicted value is ever persisted and later trusted as fact.
+    # ------------------------------------------------------------------
+    REPLAY_REHYDRATION_LIMIT = 400
+
+    def _ensure_replay_persistence(self) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS replay_sessions (
+                session_id TEXT PRIMARY KEY,
+                season_id INTEGER NOT NULL,
+                match_id INTEGER NOT NULL,
+                innings INTEGER NOT NULL,
+                start_over_number INTEGER,
+                start_ball_number INTEGER,
+                model_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                predictions_revealed INTEGER NOT NULL DEFAULT 0,
+                created_at_utc TEXT NOT NULL,
+                updated_at_utc TEXT NOT NULL
+            )
+            """
+        )
+        self.conn.commit()
+
+    def _persist_session(self, session: ReplaySession) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO replay_sessions (
+                session_id, season_id, match_id, innings, start_over_number, start_ball_number,
+                model_version, status, predictions_revealed, created_at_utc, updated_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                status = excluded.status,
+                predictions_revealed = excluded.predictions_revealed,
+                start_over_number = excluded.start_over_number,
+                start_ball_number = excluded.start_ball_number,
+                updated_at_utc = excluded.updated_at_utc
+            """,
+            (
+                session.session_id,
+                session.season_id,
+                session.match_id,
+                session.innings,
+                session.start_over_number,
+                session.start_ball_number,
+                session.model_version,
+                session.status.value,
+                session.predictions_revealed,
+                session.created_at_utc,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self.conn.commit()
+
+    def _rehydrate_session(self, session_id: str) -> ReplaySession | None:
+        row = self._fetchone(
+            "load_replay_session",
+            """
+            SELECT session_id, season_id, match_id, innings, start_over_number, start_ball_number,
+                   model_version, status, predictions_revealed, created_at_utc
+            FROM replay_sessions
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        )
+        if row is None:
+            return None
+
+        revealed = int(row["predictions_revealed"])
+        if revealed > self.REPLAY_REHYDRATION_LIMIT:
+            # Keep rehydration inside a predictable latency budget instead of
+            # silently replaying an unbounded number of deterministic steps.
+            raise ValueError("session_id cannot be restored: replay position exceeds rehydration limit")
+
+        sequence = SequentialPredictionSession(
+            self.conn,
+            int(row["season_id"]),
+            int(row["match_id"]),
+            int(row["innings"]),
+            model_version=str(row["model_version"]),
+            start_over_number=None if row["start_over_number"] is None else int(row["start_over_number"]),
+            start_ball_number=None if row["start_ball_number"] is None else int(row["start_ball_number"]),
+        )
+        session = ReplaySession(
+            session_id=str(row["session_id"]),
+            season_id=int(row["season_id"]),
+            match_id=int(row["match_id"]),
+            innings=int(row["innings"]),
+            start_over_number=None if row["start_over_number"] is None else int(row["start_over_number"]),
+            start_ball_number=None if row["start_ball_number"] is None else int(row["start_ball_number"]),
+            model_version=str(row["model_version"]),
+            sequence=sequence,
+            status=ReplayStatus.READY,
+            created_at_utc=str(row["created_at_utc"]),
+        )
+        # Deterministic replay of the already-revealed portion rebuilds the
+        # ledger, accuracy and evidence exactly as they were.
+        for _ in range(revealed):
+            if not session.sequence.has_next():
+                break
+            session.predict_next()
+            session.reveal_next()
+        self._sessions[session_id] = session
+        return session
+
+    def list_replay_start_points(self, match_id: int, innings: int) -> list[dict[str, Any]]:
+        """Every real delivery in an innings, so a user can travel to any ball."""
+        rows = self._fetchall(
+            "list_replay_start_points",
+            """
+            SELECT over_number, ball_number, batter, bowler, total_runs, is_wicket,
+                   COALESCE(
+                       SUM(total_runs) OVER (
+                           PARTITION BY match_id, innings
+                           ORDER BY over_number, ball_number, source_row_number
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                       ), 0
+                   ) AS score_before,
+                   COALESCE(
+                       SUM(is_wicket) OVER (
+                           PARTITION BY match_id, innings
+                           ORDER BY over_number, ball_number, source_row_number
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                       ), 0
+                   ) AS wickets_before
+            FROM deliveries
+            WHERE match_id = ? AND innings = ?
+            ORDER BY over_number, ball_number, source_row_number
+            """,
+            (match_id, innings),
+        )
+        if not rows:
+            raise ValueError("match_id/innings not found")
+        return [
+            {
+                "over_number": int(r["over_number"]),
+                "ball_number": int(r["ball_number"]),
+                "batter": r["batter"],
+                "bowler": r["bowler"],
+                "score_before": int(r["score_before"]),
+                "wickets_before": int(r["wickets_before"]),
+            }
+            for r in rows
+        ]
 
     def list_fixtures(
         self,
@@ -830,10 +983,13 @@ class TimeMachineService:
         )
         created.status = ReplayStatus.READY
         self._sessions[session_id] = created
+        self._persist_session(created)
         return created.current_replay_state()
 
     def get_replay_session(self, session_id: str) -> ReplaySession:
         session = self._sessions.get(session_id)
+        if session is None:
+            session = self._rehydrate_session(session_id)
         if session is None:
             raise ValueError("session_id not found")
         return session
@@ -847,11 +1003,14 @@ class TimeMachineService:
 
     def reveal_next(self, session_id: str) -> dict[str, Any]:
         session = self.get_replay_session(session_id)
-        return session.reveal_next()
+        payload = session.reveal_next()
+        self._persist_session(session)
+        return payload
 
     def restart_replay_session(self, session_id: str) -> dict[str, Any]:
         session = self.get_replay_session(session_id)
         session.restart()
+        self._persist_session(session)
         return session.current_replay_state()
 
     def replay_ledger(self, session_id: str) -> list[dict[str, Any]]:

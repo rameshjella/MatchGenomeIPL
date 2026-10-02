@@ -63,6 +63,13 @@ class TimeMachineAPI:
     def get_match_innings(self, match_id: int) -> dict[str, Any]:
         return {"match_id": match_id, "innings": self.service.list_innings(match_id)}
 
+    def get_replay_start_points(self, match_id: int, innings: int) -> dict[str, Any]:
+        return {
+            "match_id": match_id,
+            "innings": innings,
+            "deliveries": self.service.list_replay_start_points(match_id, innings),
+        }
+
     def post_replays(
         self,
         match_id: int,

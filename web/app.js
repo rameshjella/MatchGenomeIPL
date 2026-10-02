@@ -156,6 +156,8 @@ const els = {
   matchSearchInput: document.getElementById("matchSearchInput"),
   teamFilterSelect: document.getElementById("teamFilterSelect"),
   inningsSelect: document.getElementById("inningsSelect"),
+  startPointSelect: document.getElementById("startPointSelect"),
+  resumeReplayBtn: document.getElementById("resumeReplayBtn"),
   matchListSummary: document.getElementById("matchListSummary"),
   selectedMatchMeta: document.getElementById("selectedMatchMeta"),
   teamDataNotice: document.getElementById("teamDataNotice"),
@@ -2579,6 +2581,63 @@ async function loadInnings() {
   });
   state.selectedInnings = state.innings.length ? state.innings[0] : null;
   els.startReplayBtn.disabled = !state.innings.length;
+  await loadStartPoints();
+}
+
+const LAST_SESSION_KEY = "mg-last-replay-session";
+
+function rememberSession(sessionId) {
+  try {
+    if (sessionId) localStorage.setItem(LAST_SESSION_KEY, sessionId);
+    else localStorage.removeItem(LAST_SESSION_KEY);
+  } catch (err) {
+    /* storage unavailable */
+  }
+  refreshResumeAffordance();
+}
+
+function refreshResumeAffordance() {
+  if (!els.resumeReplayBtn) return;
+  let stored = null;
+  try {
+    stored = localStorage.getItem(LAST_SESSION_KEY);
+  } catch (err) {
+    stored = null;
+  }
+  els.resumeReplayBtn.hidden = !stored || stored === state.sessionId;
+}
+
+/**
+ * Travel-to-any-ball support. Start points come from real deliveries, so wides
+ * and no-balls keep their true ball numbers instead of an assumed 1-6 grid.
+ */
+async function loadStartPoints() {
+  if (!els.startPointSelect) return;
+  els.startPointSelect.innerHTML = "";
+  els.startPointSelect.appendChild(option("First ball of innings", ""));
+  state.startPoints = [];
+  if (state.selectedMatchId === null || !state.selectedInnings) return;
+  try {
+    const payload = await api.get(`/api/matches/${state.selectedMatchId}/innings/${state.selectedInnings.innings}/deliveries`);
+    state.startPoints = payload.deliveries || [];
+  } catch (err) {
+    state.startPoints = [];
+    return;
+  }
+  state.startPoints.forEach((d) => {
+    const label = `Over ${d.over_number}.${d.ball_number} · ${d.score_before}/${d.wickets_before} · ${d.batter} vs ${d.bowler}`;
+    els.startPointSelect.appendChild(option(label, `${d.over_number}:${d.ball_number}`));
+  });
+}
+
+function selectedStartPoint() {
+  const raw = els.startPointSelect ? (els.startPointSelect.value || "").trim() : "";
+  if (!raw) return null;
+  const parts = raw.split(":");
+  const over = Number(parts[0]);
+  const ball = Number(parts[1]);
+  if (!Number.isFinite(over) || !Number.isFinite(ball)) return null;
+  return { start_over_number: over, start_ball_number: ball };
 }
 
 async function refreshSessionMeta() {
@@ -2591,9 +2650,14 @@ async function startReplay() {
   const innings = Number(els.inningsSelect.value);
 
   setStatus("Creating replay session...");
-  const created = await api.post("/api/replays", { match_id: state.selectedMatchId, innings });
+  const created = await api.post("/api/replays", {
+    match_id: state.selectedMatchId,
+    innings,
+    ...(selectedStartPoint() || {}),
+  });
 
   state.sessionId = created.session_id;
+  rememberSession(created.session_id);
   state.sessionMeta = created;
   state.lastPrediction = null;
   state.timeline = [];
@@ -2672,6 +2736,73 @@ async function revealNext() {
     setUiState(UiState.PREDICTION_REVEALED);
     clearStatus();
   }
+}
+
+/**
+ * Replay sessions are durable server-side, so a browser refresh or an app
+ * restart no longer discards the travelled position.
+ */
+async function resumeReplay() {
+  let stored = null;
+  try {
+    stored = localStorage.getItem(LAST_SESSION_KEY);
+  } catch (err) {
+    stored = null;
+  }
+  if (!stored) return;
+
+  setStatus("Restoring your last replay...");
+  let meta;
+  try {
+    meta = await api.get(`/api/replays/${stored}`);
+  } catch (err) {
+    rememberSession(null);
+    setStatus("That replay is no longer available. Start a new one.", "error");
+    return;
+  }
+
+  state.sessionId = meta.session_id;
+  state.sessionMeta = meta;
+  state.selectedMatchId = meta.match_id;
+  state.lastPrediction = null;
+  state.selectedTimelineIndex = -1;
+  state.userCall = null;
+
+  let ledger = { entries: [] };
+  try {
+    ledger = await api.get(`/api/replays/${state.sessionId}/ledger`);
+  } catch (err) {
+    ledger = { entries: [] };
+  }
+  state.timeline = (ledger.entries || [])
+    .filter((entry) => entry.actual_outcome !== null && entry.actual_outcome !== undefined)
+    .map((entry) => ({
+      over: entry.target_identity?.over_number,
+      ball: entry.target_identity?.ball_number,
+      batter: entry.state_identity?.batter ?? entry.state_identity?.striker ?? "-",
+      bowler: entry.state_identity?.bowler ?? "-",
+      user_call: null,
+      predicted: entry.predicted_top_outcome,
+      actual: entry.actual_outcome,
+      status: entry.correct ? "correct" : "incorrect",
+    }));
+
+  els.replayPanel.hidden = false;
+  updateReplayLayoutState();
+  els.actualBlock.className = "actual-block";
+  els.actualBlock.textContent = "Reveal the ball to see actual outcome.";
+  els.predictedTop.textContent = "READY";
+  els.predictedPct.textContent = "Before reveal";
+  els.probabilityBars.innerHTML = "";
+
+  setReplayTab("prediction");
+  buildUserCallOptions();
+  setUiState(meta.status === "COMPLETED" ? UiState.COMPLETED : UiState.READY);
+  renderReplayHeaderMetrics();
+  updateTimeline();
+  rememberSession(state.sessionId);
+  setRoute({ view: "replay" });
+  setStatus(`Replay restored at ball ${state.timeline.length + 1}.`);
 }
 
 async function restartReplay() {
@@ -2961,7 +3092,15 @@ function attachEvents() {
     const innings = Number(els.inningsSelect.value);
     state.selectedInnings = state.innings.find((x) => Number(x.innings) === innings) || null;
     els.startReplayBtn.disabled = !state.selectedInnings;
+    loadStartPoints().catch(() => {});
   });
+
+  if (els.resumeReplayBtn) {
+    els.resumeReplayBtn.addEventListener("click", () =>
+      resumeReplay().catch((err) => setStatus(err.message || "Could not restore replay.", "error")),
+    );
+  }
+  refreshResumeAffordance();
 
   els.startReplayBtn.addEventListener("click", () => startReplay().catch((err) => setStatus(err.message || "Could not start replay.", "error")));
   els.predictBtn.addEventListener("click", () => predictNext().catch((err) => setStatus(err.message || "Prediction failed.", "error")));

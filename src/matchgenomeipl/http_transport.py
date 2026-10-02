@@ -149,6 +149,15 @@ class TimeMachineRequestHandler(BaseHTTPRequestHandler):
                 _json_response(self, HTTPStatus.OK, self._app().api.get_match_scorecard(match_id))
                 return
 
+            match = re.fullmatch(r"/api/matches/(\d+)/innings/(\d+)/deliveries", route)
+            if match:
+                _json_response(
+                    self,
+                    HTTPStatus.OK,
+                    self._app().api.get_replay_start_points(int(match.group(1)), int(match.group(2))),
+                )
+                return
+
             match = re.fullmatch(r"/api/matches/(\d+)/innings", route)
             if match:
                 match_id = int(match.group(1))

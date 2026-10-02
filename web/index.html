@@ -4,8 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MatchGenomeIPL - IPL Intelligence Layer</title>
-    <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#070a0d" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233a67e8'/%3E%3Ctext x='16' y='22' font-family='Segoe UI,Arial' font-size='17' font-weight='700' text-anchor='middle' fill='%23ffffff'%3EM%3C/text%3E%3C/svg%3E"
+    />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -346,12 +349,14 @@
               <label>Find match <input id="matchSearchInput" type="search" placeholder="Search teams, venue, date, match ID" /></label>
               <label>Filter team <select id="teamFilterSelect"><option value="">All teams</option></select></label>
               <label>Innings <select id="inningsSelect"></select></label>
+              <label>Travel to ball <select id="startPointSelect"><option value="">First ball of innings</option></select></label>
             </div>
 
             <p id="matchListSummary" class="muted"></p>
             <p id="selectedMatchMeta" class="muted">Select a match card to continue.</p>
             <div id="matchCards" class="match-cards" role="list" aria-label="Match cards"></div>
             <button id="startReplayBtn" class="primary" type="button" disabled>Enter Prediction Theatre</button>
+            <button id="resumeReplayBtn" type="button" hidden>Resume last replay</button>
           </aside>
 
           <section id="replayPanel" class="workspace-pane" hidden>
@@ -546,6 +551,8 @@
           btn.setAttribute("aria-pressed", mode === "light" ? "true" : "false");
           btn.setAttribute("aria-label", "Appearance: " + mode + ". Activate to switch theme.");
           if (label) label.textContent = mode === "light" ? "Light" : "Dark";
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", mode === "light" ? "#f7f5f0" : "#070a0d");
         }
         btn.addEventListener("click", function () {
           var next = root.getAttribute("data-theme") === "light" ? "dark" : "light";

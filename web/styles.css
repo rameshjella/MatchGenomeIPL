@@ -1,4 +1,8 @@
 :root {
+  /* Native UA surfaces (select popups, scrollbars, autofill, spinners) are not
+     reachable by author CSS. color-scheme is what makes them follow the
+     selected theme instead of staying at the browser default. */
+  color-scheme: dark;
   --ink-980: #0b0b0d;
   --ink-940: #121217;
   --ink-900: #181820;
@@ -2264,6 +2268,7 @@ body.theme-premium::before {
 
 /* ------Light appearance ------*/
 [data-theme="light"] {
+  color-scheme: light;
   --bg-obsidian: #f3f1ec;
   --bg-graphite: #eceae4;
   --bg-forest: #f6f4ef;

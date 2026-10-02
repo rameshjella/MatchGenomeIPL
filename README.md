@@ -31,6 +31,8 @@ Prediction is shown before reveal, then reality is revealed and scored. This pre
 - Deterministic contextual prediction model with pre-ball player history, matchup context, and innings-pressure adjustments.
 - Prediction-difference diagnostics showing what changed between consecutive deliveries.
 - Time Machine session lifecycle (`predict -> reveal -> update`).
+- Durable replay sessions: a session survives process restarts and is restored deterministically (position, ledger, accuracy).
+- Travel to any delivery: replay can start from any real ball of an innings, selected from actual deliveries.
 - HTTP API transport and browser UI.
 - Ask MatchGenome natural-language querying over local SQLite with structured query planning and read-only SQL execution.
 - Player Intelligence profiles with role-aware sections, season/phase splits, matchup reliability, and replay return links.
@@ -38,8 +40,8 @@ Prediction is shown before reveal, then reality is revealed and scored. This pre
 
 ## Current vs Future Scope
 
-- Implemented now: prediction/reveal replay, player intelligence, logging, startup scripts, benchmarks, tests.
-- Not implemented yet: persistent replay sessions across process restarts, rich random seek UI, broad photo library coverage.
+- Implemented now: prediction/reveal replay, durable sessions, travel-to-any-ball seek, player intelligence, logging, startup scripts, benchmarks, tests.
+- Not implemented yet: broad photo library coverage.
 
 ## System Architecture
 
@@ -221,6 +223,7 @@ Open `http://127.0.0.1:8080`.
 - `GET /api/seasons/{season_id}/matches`
 - `GET /api/matches/{match_id}`
 - `GET /api/matches/{match_id}/innings`
+- `GET /api/matches/{match_id}/innings/{innings}/deliveries`
 - `POST /api/replays`
 - `GET /api/replays/{session_id}`
 - `POST /api/replays/{session_id}/predict`
@@ -313,7 +316,7 @@ python scripts/run_time_machine_vertical_slice.py
 
 ## Limitations
 
-- Replay sessions are in-memory (not persisted across process restart).
+- Replay sessions are durable in SQLite; restoration of a very deep position is bounded by a rehydration limit.
 - Some match metadata (venue/date/toss) is unavailable in local dataset.
 - Player photo coverage is intentionally conservative and uses repository-generated local avatar illustrations.
 - Timeline focuses on efficient recent context rather than unrestricted deep seeking.
